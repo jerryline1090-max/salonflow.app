@@ -1,0 +1,80 @@
+import { Router } from "express";
+import { registerBusiness, login, createTeamMember, InvalidCredentialsError, AccountInactiveError } from "../modules/auth/authService";
+import { authenticate } from "../middleware/authenticate";
+import { requirePermission } from "../middleware/authorize";
+import { prisma } from "../lib/prisma";
+
+export const authRouter = Router();
+
+// Public — this is the only way a Business + its OWNER account come into existence.
+authRouter.post("/register", async (req, res) => {
+  try {
+    const { businessName, ownerName, email, password, phone } = req.body;
+    if (!businessName || !ownerName || !email || !password) {
+      return res.status(400).json({ error: "businessName, ownerName, email, and password are required" });
+    }
+    const { business, user, token } = await registerBusiness({ businessName, ownerName, email, password, phone });
+    res.status(201).json({ token, business, user: { id: user.id, name: user.name, email: user.email, role: user.role, businessId: business.id } });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Public.
+authRouter.post("/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const { user, token } = await login({ email, password });
+    res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role, businessId: user.businessId } });
+  } catch (err: any) {
+    if (err instanceof InvalidCredentialsError || err instanceof AccountInactiveError) {
+      return res.status(401).json({ error: err.message });
+    }
+    // Never leak Prisma connection strings, database hosts, stack traces, or
+    // other infrastructure detail into the sign-in form. The server log keeps
+    // the diagnostic detail; the browser gets an actionable, safe message.
+    console.error("Login failed", err);
+    res.status(503).json({ error: "We couldn't connect to SalonFlow right now. Please try again shortly." });
+  }
+});
+
+// Everything below requires a valid token.
+authRouter.get("/me", authenticate, async (req, res) => {
+  const user = await prisma.user.findUnique({ where: { id: req.actor!.userId } });
+  if (!user) return res.status(404).json({ error: "User not found" });
+  res.json({ id: user.id, name: user.name, email: user.email, role: user.role, businessId: user.businessId });
+});
+
+// Section 28: viewing the team is a lighter bar than creating an account —
+// "staff:view" (which MANAGER has by default, unlike "staff:create").
+authRouter.get("/team", authenticate, requirePermission("staff", "view"), async (req, res) => {
+  const users = await prisma.user.findMany({
+    where: { businessId: req.actor!.businessId },
+    select: { id: true, name: true, email: true, role: true, isActive: true, createdAt: true },
+    orderBy: { createdAt: "asc" },
+  });
+  res.json(users);
+});
+
+// Section 28: only an OWNER may create team accounts and assign their role
+// (MANAGER default permissions don't include "staff:create" — see core/permissions.ts —
+// so this 403s for anyone but an OWNER unless the business explicitly overrides it).
+authRouter.post("/team", authenticate, requirePermission("staff", "create"), async (req, res) => {
+  try {
+    const { name, email, password, role } = req.body;
+    if (role === "OWNER") {
+      return res.status(400).json({ error: "Cannot create additional OWNER accounts through this endpoint" });
+    }
+    const user = await createTeamMember({
+      businessId: req.actor!.businessId!,
+      name,
+      email,
+      password,
+      role,
+      actorUserId: req.actor!.userId,
+    });
+    res.status(201).json({ id: user.id, name: user.name, email: user.email, role: user.role });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});

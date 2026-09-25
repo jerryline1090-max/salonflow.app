@@ -1,0 +1,778 @@
+// SalonFlow — Core Data Model
+//
+// This schema is the single source of truth described in the architecture spec.
+// Every channel (dashboard, calendar, WhatsApp, Instagram, AI Receptionist, staff app)
+// writes through the same tables via the same business-logic layer (see src/modules).
+// No channel gets its own appointment/client table.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// ENUMS
+// ──────────────────────────────────────────────────────────────────────────
+
+enum BusinessMode {
+  SALON_ONLY
+  HOME_ONLY
+  BOTH
+}
+
+enum Role {
+  OWNER
+  MANAGER
+  STAFF
+}
+
+enum StaffStatus {
+  ACTIVE
+  INACTIVE // temporarily unavailable (leave, etc.) — schedule kept
+  REMOVED // no longer with the salon — historical records kept
+}
+
+enum LocationType {
+  SALON
+  HOME
+}
+
+// Deliberately NOT a catch-all "guessed" state. COMPLETED/CANCELLED/NO_SHOW
+// must be set by an explicit human decision or an unambiguous system rule —
+// never inferred just because a date passed. See AppointmentEvent + needsAttention.
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum AppointmentEventType {
+  CREATED
+  STATUS_CHANGED
+  TIME_CHANGED
+  DATE_CHANGED
+  SERVICE_CHANGED
+  STAFF_CHANGED
+  CLIENT_CHANGED
+  PAYMENT_ADDED
+  PAYMENT_CHANGED
+  CANCELLATION
+  RESCHEDULED
+  REASSIGNED
+  CLIENT_NOTIFIED
+  STAFF_NOTIFIED
+  COMPLETED
+  NO_SHOW_MARKED
+  FLAGGED_NEEDS_ATTENTION
+  ATTENTION_RESOLVED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  TRANSFER
+  WALLET
+  OTHER
+}
+
+enum IntegrationProvider {
+  WHATSAPP_BUSINESS
+  INSTAGRAM
+  WEBSITE_CHAT
+}
+
+enum IntegrationStatus {
+  NOT_CONNECTED
+  CONNECTING
+  CONNECTED
+  NEEDS_SETUP
+  NEEDS_REAUTHORIZATION
+  DISCONNECTED
+  ERROR
+}
+
+enum BookingChannel {
+  DASHBOARD
+  CALENDAR
+  STAFF_APP
+  WEBSITE
+  WHATSAPP
+  INSTAGRAM
+  AI_RECEPTIONIST
+}
+
+enum NotificationType {
+  APPOINTMENT_CREATED
+  APPOINTMENT_CONFIRMED
+  APPOINTMENT_CHANGED
+  STAFF_ASSIGNED
+  STAFF_REASSIGNED
+  APPOINTMENT_CANCELLED
+  PAYMENT_RECEIVED
+  PAYMENT_OUTSTANDING
+  APPOINTMENT_NEEDS_ATTENTION
+  STAFF_INACTIVE_LONG_PERIOD
+  AI_NEEDS_HUMAN
+  INTEGRATION_DISCONNECTED
+  REPUTATION_FEEDBACK_RECEIVED
+}
+
+enum NotificationPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum NotificationAudience {
+  OWNER
+  MANAGER
+  STAFF_MEMBER
+  CLIENT
+}
+
+// ── AI Receptionist / multi-channel conversation enums ──────────────────
+
+enum ConversationChannel {
+  WHATSAPP
+  INSTAGRAM
+  WEBSITE
+}
+
+// Mirrors the human-escalation lifecycle in section 14 of the multi-channel
+// spec: the AI handles it, or a human has been pulled in, or it's done.
+enum ConversationStatus {
+  AI_HANDLING
+  ESCALATED // flagged for a human; AI should not keep autonomously acting
+  HUMAN_HANDLING // a staff member has taken over
+  CLOSED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum ConversationMessageType {
+  TEXT
+  VOICE
+  IMAGE
+  VIDEO
+  OTHER
+}
+
+enum MessageActorType {
+  CLIENT
+  AI
+  STAFF
+  SYSTEM
+}
+
+enum MediaProcessingStatus {
+  PENDING
+  PROCESSED
+  FAILED
+  SKIPPED
+}
+
+// ── Reputation engine enums (master spec section 30) ─────────────────────
+
+enum ReputationRequestStatus {
+  PENDING // queued, not yet sent
+  SENT // feedback request delivered, awaiting a response
+  RESPONDED // client replied — see sentiment/rating/feedbackText
+  EXPIRED // no channel to reach the client through, or no response ever came
+}
+
+enum ReputationSentiment {
+  HAPPY
+  NEUTRAL
+  UNHAPPY
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// BUSINESS (Settings — business-wide configuration only; see section 4)
+// ──────────────────────────────────────────────────────────────────────────
+
+model Business {
+  id                    String       @id @default(cuid())
+  name                  String
+  logoUrl               String?
+  description           String?
+  phone                 String?
+  email                 String?
+  address               String?
+  timezone              String       @default("Africa/Lagos")
+  mode                  BusinessMode @default(SALON_ONLY)
+
+  // Booking rules (business-wide; per-service overrides live on Service)
+  defaultBufferMinutes  Int          @default(0)
+  minBookingNoticeMins  Int          @default(0)
+  maxBookingHorizonDays Int          @default(60)
+
+  // Home-service wide defaults
+  homeServiceRadiusKm   Float?
+  homeServiceTravelBufferMins Int    @default(0)
+
+  // Reputation engine (section 30) — business-wide config only; individual
+  // feedback lives on ReputationRequest.
+  reputationEnabled           Boolean @default(true)
+  reputationRequestDelayHours Int     @default(2) // how long after completion to ask for feedback
+  reputationHappyThreshold    Int     @default(4) // rating >= this counts as "happy" (out of 5)
+  googleReviewUrl              String?
+
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  users            User[]
+  services         Service[]
+  staff            Staff[]
+  clients          Client[]
+  appointments     Appointment[]
+  payments         Payment[]
+  notifications    Notification[]
+  integrations     Integration[]
+  workingHours     BusinessHours[]
+  knowledgeBase    KnowledgeBaseEntry[]
+  auditLogs        AuditLog[]
+  conversations         Conversation[]
+  clientChannelIdentities ClientChannelIdentity[]
+  assistantConversations AssistantConversation[]
+  reputationRequests ReputationRequest[]
+}
+
+// Salon operating hours — business-wide. Staff-specific schedules live on Staff.
+model BusinessHours {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  dayOfWeek  Int // 0=Sunday..6=Saturday
+  openTime   String // "09:00"
+  closeTime  String // "18:00"
+  isClosed   Boolean  @default(false)
+
+  @@unique([businessId, dayOfWeek])
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// USERS, ROLES, PERMISSIONS (section 27–28: page access + action access)
+// ──────────────────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  businessId   String
+  business     Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(STAFF) // assigned by owner/admin — never self-selected
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  staffProfile   Staff?
+  permissions    Permission[]
+  auditLogs      AuditLog[]        @relation("ActorUser")
+  appointmentEventsCaused AppointmentEvent[] @relation("EventActorUser")
+  assistantConversations AssistantConversation[]
+}
+
+// Fine-grained override on top of role defaults (role defaults live in code —
+// see src/core/permissions.ts — this table only stores explicit overrides).
+model Permission {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resource   String // e.g. "payments", "reports", "settings"
+  canView    Boolean  @default(false)
+  canCreate  Boolean  @default(false)
+  canEdit    Boolean  @default(false)
+  canDelete  Boolean  @default(false)
+
+  @@unique([userId, resource])
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// SERVICES (section 9 — single source of truth for what the salon offers)
+// ──────────────────────────────────────────────────────────────────────────
+
+model Service {
+  id                  String   @id @default(cuid())
+  businessId          String
+  business            Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name                String
+  description         String?
+  category             String?
+  imageUrl            String?
+  price               Int // stored in minor currency unit (kobo/cents)
+  durationMinutes     Int
+  bufferMinutes       Int      @default(0)
+  isActive            Boolean  @default(true)
+
+  availableAtSalon    Boolean  @default(true)
+  availableAtHome     Boolean  @default(false)
+  homeTravelBufferMins Int?    // overrides business default when set
+
+  requiredSkills      String[] @default([]) // matched against Staff.skills
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  staffLinks          StaffService[]
+  appointments        Appointment[]
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// STAFF (section 10–11)
+// ──────────────────────────────────────────────────────────────────────────
+
+model Staff {
+  id                String       @id @default(cuid())
+  businessId        String
+  business          Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  userId            String?      @unique
+  user              User?        @relation(fields: [userId], references: [id])
+  name              String
+  phone             String?
+  photoUrl          String?
+  skills            String[]     @default([])
+  status            StaffStatus  @default(ACTIVE)
+  homeServiceEligible Boolean    @default(false)
+  commissionPercent Float?
+  removedAt         DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  services          StaffService[]
+  schedule          StaffSchedule[]
+  timeOff           StaffTimeOff[]
+  appointments      Appointment[]
+  appointmentEvents AppointmentEvent[] @relation("EventActorStaff")
+}
+
+// Which services a staff member is qualified/allowed to perform.
+model StaffService {
+  id        String  @id @default(cuid())
+  staffId   String
+  staff     Staff   @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  serviceId String
+  service   Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, serviceId])
+}
+
+model StaffSchedule {
+  id         String   @id @default(cuid())
+  staffId    String
+  staff      Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  dayOfWeek  Int // 0..6
+  startTime  String // "09:00"
+  endTime    String // "17:00"
+  isOff      Boolean  @default(false)
+
+  @@unique([staffId, dayOfWeek])
+}
+
+model StaffTimeOff {
+  id        String   @id @default(cuid())
+  staffId   String
+  staff     Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  startsAt  DateTime
+  endsAt    DateTime
+  reason    String?
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// CLIENTS (section 8 — visit counts derived, never stored as a raw increment)
+// ──────────────────────────────────────────────────────────────────────────
+
+model Client {
+  id           String   @id @default(cuid())
+  businessId   String
+  business     Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name         String
+  phone        String?
+  email        String?
+  address      String?
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  appointments Appointment[]
+  payments     Payment[]
+  conversations       Conversation[]
+  channelIdentities   ClientChannelIdentity[]
+  reputationRequests  ReputationRequest[]
+
+  // NOTE: There is intentionally no `totalVisits` column on this table.
+  // Visit counts are DERIVED at read time from Appointment.status = COMPLETED
+  // (see src/modules/clients/clientStats.ts) so they can never drift from
+  // the source of truth or be double-counted by a future appointment.
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// APPOINTMENTS (sections 6, 7, 12 — the lifecycle, not just a row)
+// ──────────────────────────────────────────────────────────────────────────
+
+model Appointment {
+  id                String            @id @default(cuid())
+  businessId        String
+  business          Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  clientId          String
+  client            Client            @relation(fields: [clientId], references: [id])
+  serviceId         String
+  service           Service           @relation(fields: [serviceId], references: [id])
+  staffId           String
+  staff             Staff             @relation(fields: [staffId], references: [id])
+
+  status            AppointmentStatus @default(PENDING)
+  locationType      LocationType      @default(SALON)
+  homeAddress       String?
+
+  startsAt          DateTime
+  endsAt            DateTime // derived from service duration + buffer at creation time
+  travelBufferMins  Int               @default(0) // only relevant for HOME appointments
+
+  bookingChannel    BookingChannel    @default(DASHBOARD)
+
+  // Price is SNAPSHOTTED at booking time so a later Service.price change
+  // never rewrites historical appointments/payments (section 13).
+  priceSnapshot     Int
+  durationSnapshot  Int
+
+  // Set true when the system detects an ambiguous state (e.g. pending
+  // appointment whose date has passed) — never auto-resolved (section 7).
+  needsAttention     Boolean          @default(false)
+  attentionReason    String?
+
+  notes             String?
+
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  events            AppointmentEvent[]
+  payments          Payment[]
+  notifications     Notification[]
+  conversationMessages ConversationMessage[]
+  reputationRequest ReputationRequest?
+
+  @@index([businessId, startsAt])
+  @@index([staffId, startsAt])
+  @@index([status])
+}
+
+// The event/history trail required by section 6 and 31–32.
+// Every meaningful mutation to an appointment produces one of these —
+// never overwrite fields silently without a paired event.
+model AppointmentEvent {
+  id             String                @id @default(cuid())
+  appointmentId  String
+  appointment    Appointment           @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  type           AppointmentEventType
+  previousValue  String? // JSON-encoded
+  newValue       String? // JSON-encoded
+  reason         String?
+
+  // Actor: exactly one of these is set (system, a user, an AI action, or a client via a channel)
+  actorUserId    String?
+  actorUser      User?                 @relation("EventActorUser", fields: [actorUserId], references: [id])
+  actorStaffId   String?
+  actorStaff     Staff?                @relation("EventActorStaff", fields: [actorStaffId], references: [id])
+  actorType      String                @default("SYSTEM") // "SYSTEM" | "USER" | "AI" | "CLIENT"
+
+  createdAt      DateTime              @default(now())
+
+  @@index([appointmentId, createdAt])
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// PAYMENTS (section 13 — separate from, but linked to, appointments)
+// ──────────────────────────────────────────────────────────────────────────
+
+model Payment {
+  id             String        @id @default(cuid())
+  businessId     String
+  business       Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  appointmentId  String?
+  appointment    Appointment?  @relation(fields: [appointmentId], references: [id])
+  clientId       String
+  client         Client        @relation(fields: [clientId], references: [id])
+
+  amount         Int // minor currency unit, historically accurate — never recalculated
+  method         PaymentMethod @default(CASH)
+  status         PaymentStatus @default(UNPAID)
+
+  paidAt         DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([businessId, status])
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// NOTIFICATIONS (section 15–16)
+// ──────────────────────────────────────────────────────────────────────────
+
+model Notification {
+  id             String                @id @default(cuid())
+  businessId     String
+  business       Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  appointmentId  String?
+  appointment    Appointment?          @relation(fields: [appointmentId], references: [id])
+
+  type           NotificationType
+  priority       NotificationPriority  @default(NORMAL)
+  audience       NotificationAudience
+  audienceUserId String? // if targeted at a specific staff/owner user
+
+  title          String
+  body           String
+  isRead         Boolean               @default(false)
+  actionRequired Boolean               @default(false)
+
+  createdAt      DateTime              @default(now())
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// INTEGRATIONS (sections 19–20)
+// ──────────────────────────────────────────────────────────────────────────
+
+model Integration {
+  id          String              @id @default(cuid())
+  businessId  String
+  business    Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  provider    IntegrationProvider
+  status      IntegrationStatus   @default(NOT_CONNECTED)
+  externalId  String? // e.g. WABA phone number ID, IG business account id
+  // Never store raw passwords/secrets here — only references to tokens held
+  // in the secrets manager (see modules/ai/secretsProvider.ts / modules/integrations/integrationService.ts).
+  secretRef   String?
+  lastSyncedAt DateTime?
+  lastError   String?
+  updatedAt   DateTime            @updatedAt
+
+  @@unique([businessId, provider])
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// AI KNOWLEDGE BASE (section 25)
+// ──────────────────────────────────────────────────────────────────────────
+
+model KnowledgeBaseEntry {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  topic      String
+  question   String?
+  answer     String
+  source     String   @default("OWNER") // "OWNER" | "ESCALATION_RESOLVED"
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// AUDIT LOG (section 32 — generic, cross-cutting)
+// ──────────────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  businessId    String
+  business      Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  actorUserId   String?
+  actorUser     User?    @relation("ActorUser", fields: [actorUserId], references: [id])
+  actorType     String   @default("USER") // "USER" | "AI" | "SYSTEM"
+  resource      String // "appointment" | "payment" | "staff" | "settings" | "permission" | "integration"
+  resourceId    String
+  action        String // "create" | "update" | "delete" | "reassign" | ...
+  previousValue String?
+  newValue      String?
+  createdAt     DateTime @default(now())
+
+  @@index([businessId, resource, resourceId])
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// AI RECEPTIONIST — UNIFIED MULTI-CHANNEL CONVERSATIONS
+//
+// One conversation model, one message model, regardless of whether the
+// client is messaging on WhatsApp, Instagram, or the website widget. The
+// channel is just a tag on the row — there is no "WhatsAppConversation" or
+// "InstagramConversation" table. See src/modules/ai/channels/ for the
+// adapters that translate each provider's webhook payload into these shapes.
+// ──────────────────────────────────────────────────────────────────────────
+
+model Conversation {
+  id                     String              @id @default(cuid())
+  businessId             String
+  business               Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  channel                ConversationChannel
+  // Provider-specific identifiers — never exposed to the client, only used
+  // to route outbound replies back to the right chat thread.
+  externalConversationId String
+  externalUserId         String
+
+  clientId               String?
+  client                 Client?             @relation(fields: [clientId], references: [id])
+
+  status                 ConversationStatus  @default(AI_HANDLING)
+  escalationReason       String?
+  lastMessageAt          DateTime            @default(now())
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+
+  messages               ConversationMessage[]
+  reputationRequests     ReputationRequest[]
+
+  @@unique([businessId, channel, externalConversationId])
+  @@index([businessId, status])
+}
+
+model ConversationMessage {
+  id                    String                  @id @default(cuid())
+  conversationId        String
+  conversation          Conversation            @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  direction             MessageDirection
+  actorType             MessageActorType
+  type                  ConversationMessageType
+
+  // For TEXT: the message itself. For VOICE: the transcription (the
+  // original audio is never dropped — see mediaSecureRef/transcription
+  // below being kept distinct for auditability). For IMAGE/VIDEO: an
+  // optional caption.
+  text                  String?
+  // Explicit, separate field for a voice transcription so it's always
+  // clear which text was actually spoken vs. typed/captioned.
+  transcription         String?
+
+  mediaType             String? // MIME-ish, e.g. "audio/ogg", "image/jpeg"
+  // A reference into secure storage (see modules/ai/mediaStore.ts) — never
+  // a raw, long-lived provider URL persisted here (section 12).
+  mediaSecureRef         String?
+  mediaProcessingStatus  MediaProcessingStatus?
+
+  externalMessageId      String?
+
+  // If this message caused or referenced an appointment action.
+  relatedAppointmentId   String?
+  relatedAppointment     Appointment?           @relation(fields: [relatedAppointmentId], references: [id])
+
+  createdAt              DateTime               @default(now())
+
+  @@index([conversationId, createdAt])
+  // Provider retries must not create multiple AI replies for one inbound message.
+  @@unique([conversationId, externalMessageId])
+}
+
+// Links one SalonFlow Client to their identity on each channel, so the same
+// person messaging on WhatsApp and later on Instagram is still one client
+// record — never two (section 10/11 of the multi-channel spec).
+model ClientChannelIdentity {
+  id             String              @id @default(cuid())
+  clientId       String
+  client         Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  businessId     String
+  business       Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  channel        ConversationChannel
+  externalUserId String
+  createdAt      DateTime            @default(now())
+
+  @@unique([businessId, channel, externalUserId])
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// AI ASSISTANT — owner/staff-facing (master spec section 29)
+//
+// Distinct from the client-facing Conversation/ConversationMessage above:
+// the actor here is an authenticated SalonFlow User with a real Role and
+// real Permission overrides, not an external client with a fixed narrow
+// tool allowlist. One running thread per (business, user) — the floating
+// icon on every dashboard page opens into the same conversation regardless
+// of which page they're on; `pageContext` on each message just records
+// what they were looking at when they asked, for the AI's own context and
+// for later debugging.
+// ──────────────────────────────────────────────────────────────────────────
+
+model AssistantConversation {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  messages AssistantMessage[]
+
+  @@unique([businessId, userId])
+}
+
+model AssistantMessage {
+  id             String                @id @default(cuid())
+  conversationId String
+  conversation   AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String // "user" | "ai"
+  text           String
+  pageContext    String? // which dashboard page the user was viewing when they sent this
+  createdAt      DateTime              @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// REPUTATION ENGINE (master spec section 30)
+//
+// After a completed appointment, ask "how was your experience?". A happy
+// response gets offered a Google review link; an unhappy or ambiguous one
+// is routed privately to the salon FIRST — never straight to a public
+// review. This is the only place a review request or sentiment gets
+// recorded; nothing here ever fabricates or edits what a client actually said.
+// ──────────────────────────────────────────────────────────────────────────
+
+model ReputationRequest {
+  id              String                  @id @default(cuid())
+  businessId      String
+  business        Business                @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  appointmentId   String                  @unique // at most one feedback request per completed appointment
+  appointment     Appointment             @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  clientId        String
+  client          Client                  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  // The channel conversation the request was actually sent through and the
+  // client's reply arrived on — lets the AI Receptionist recognize "this
+  // incoming message is answering a pending feedback request" (section 30
+  // in practice needs this, even though not spelled out explicitly).
+  conversationId  String?
+  conversation    Conversation?           @relation(fields: [conversationId], references: [id])
+
+  status          ReputationRequestStatus @default(PENDING)
+  sentAt          DateTime?
+  respondedAt     DateTime?
+
+  sentiment       ReputationSentiment?
+  rating          Int? // optional 1-5 if the client gave one
+  feedbackText    String? // the client's own words — never altered
+
+  // Section 30: unhappy (or ambiguous) feedback is routed to the salon for
+  // resolution BEFORE any public review push. This records that resolution.
+  resolvedAt      DateTime?
+  resolutionNotes String?
+
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+
+  @@index([businessId, status])
+}
