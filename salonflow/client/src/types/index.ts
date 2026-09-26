@@ -186,7 +186,7 @@ export interface PopularServiceEntry {
 export interface StaffPerformanceEntry {
   staff?: StaffMember;
   completedAppointments: number;
-  revenueGenerated: number;
+  completedServiceValue: number;
 }
 
 export interface ClientRetentionReport {

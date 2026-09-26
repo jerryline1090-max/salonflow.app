@@ -16,6 +16,7 @@ function buildApp() {
 }
 
 const ownerToken = signToken({ sub: "owner_1", businessId: "biz_1", role: "OWNER" });
+const managerToken = signToken({ sub: "manager_1", businessId: "biz_1", role: "MANAGER" });
 const staffToken = signToken({ sub: "staff_1", businessId: "biz_1", role: "STAFF" });
 
 beforeEach(() => {
@@ -39,7 +40,7 @@ describe("GET /api/notifications", () => {
     await request(buildApp()).get("/api/notifications").set("Authorization", `Bearer ${staffToken}`);
 
     const whereArg = (prisma.notification.findMany as jest.Mock).mock.calls[0][0].where;
-    expect(whereArg.OR).toEqual([{ audience: "STAFF_MEMBER" }, { audienceUserId: "staff_1" }]);
+    expect(whereArg.OR).toEqual([{ audience: "STAFF_MEMBER", audienceUserId: null }, { audienceUserId: "staff_1" }]);
   });
 
   it("filters to unread only when requested", async () => {
@@ -71,12 +72,39 @@ describe("POST /api/notifications/:id/read", () => {
   });
 
   it("marks a notification read within the actor's own business", async () => {
-    (prisma.notification.findUniqueOrThrow as jest.Mock).mockResolvedValue({ id: "notif_1", businessId: "biz_1" });
+    (prisma.notification.findUniqueOrThrow as jest.Mock).mockResolvedValue({ id: "notif_1", businessId: "biz_1", audience: "OWNER", audienceUserId: null });
     (prisma.notification.update as jest.Mock).mockResolvedValue({ id: "notif_1", isRead: true });
 
     const res = await request(buildApp()).post("/api/notifications/notif_1/read").set("Authorization", `Bearer ${ownerToken}`);
 
     expect(res.status).toBe(200);
     expect(prisma.notification.update).toHaveBeenCalledWith({ where: { id: "notif_1" }, data: { isRead: true } });
+  });
+
+  it("allows a MANAGER to mark a business notification read under the existing manager visibility policy", async () => {
+    (prisma.notification.findUniqueOrThrow as jest.Mock).mockResolvedValue({ id: "notif_1", businessId: "biz_1", audience: "OWNER", audienceUserId: null });
+    (prisma.notification.update as jest.Mock).mockResolvedValue({ id: "notif_1", isRead: true });
+
+    const res = await request(buildApp()).post("/api/notifications/notif_1/read").set("Authorization", `Bearer ${managerToken}`);
+    expect(res.status).toBe(200);
+  });
+
+  it("allows STAFF to mark a notification addressed specifically to them read", async () => {
+    (prisma.notification.findUniqueOrThrow as jest.Mock).mockResolvedValue({ id: "notif_1", businessId: "biz_1", audience: "STAFF_MEMBER", audienceUserId: "staff_1" });
+    (prisma.notification.update as jest.Mock).mockResolvedValue({ id: "notif_1", isRead: true });
+
+    const res = await request(buildApp()).post("/api/notifications/notif_1/read").set("Authorization", `Bearer ${staffToken}`);
+    expect(res.status).toBe(200);
+  });
+
+  it.each([
+    { audience: "OWNER", audienceUserId: null },
+    { audience: "STAFF_MEMBER", audienceUserId: "another_staff" },
+  ])("forbids STAFF from marking an unreadable notification read", async (notification) => {
+    (prisma.notification.findUniqueOrThrow as jest.Mock).mockResolvedValue({ id: "notif_1", businessId: "biz_1", ...notification });
+
+    const res = await request(buildApp()).post("/api/notifications/notif_1/read").set("Authorization", `Bearer ${staffToken}`);
+    expect(res.status).toBe(403);
+    expect(prisma.notification.update).not.toHaveBeenCalled();
   });
 });

@@ -7,6 +7,7 @@ import {
   getStaffPerformanceReport,
   getClientRetentionReport,
 } from "../modules/reports/reportService";
+import { InvalidReportRangeError, resolveReportRange } from "../modules/reports/reportRange";
 
 export const reportsRouter = Router();
 
@@ -14,30 +15,31 @@ export const reportsRouter = Router();
 // taken from req.actor, never from a query param, so there is no way to
 // request another salon's numbers by editing the URL.
 
-function parseRange(req: any) {
-  const from = req.query.from ? new Date(req.query.from) : new Date(new Date().setDate(new Date().getDate() - 30));
-  const to = req.query.to ? new Date(req.query.to) : new Date();
-  return { from, to };
+async function withRange(req: any, res: any, getReport: (businessId: string, from: Date, to: Date) => Promise<unknown>) {
+  try {
+    const businessId = req.actor!.businessId!;
+    const { from, to } = await resolveReportRange(businessId, req.query);
+    res.json(await getReport(businessId, from, to));
+  } catch (err: any) {
+    if (err instanceof InvalidReportRangeError) return res.status(400).json({ error: err.message });
+    res.status(400).json({ error: err.message });
+  }
 }
 
 reportsRouter.get("/revenue", requirePermission("reports", "view"), async (req, res) => {
-  const { from, to } = parseRange(req);
-  res.json(await getRevenueReport(req.actor!.businessId!, from, to));
+  await withRange(req, res, getRevenueReport);
 });
 
 reportsRouter.get("/outcomes", requirePermission("reports", "view"), async (req, res) => {
-  const { from, to } = parseRange(req);
-  res.json(await getAppointmentOutcomeReport(req.actor!.businessId!, from, to));
+  await withRange(req, res, getAppointmentOutcomeReport);
 });
 
 reportsRouter.get("/popular-services", requirePermission("reports", "view"), async (req, res) => {
-  const { from, to } = parseRange(req);
-  res.json(await getPopularServicesReport(req.actor!.businessId!, from, to));
+  await withRange(req, res, getPopularServicesReport);
 });
 
 reportsRouter.get("/staff-performance", requirePermission("reports", "view"), async (req, res) => {
-  const { from, to } = parseRange(req);
-  res.json(await getStaffPerformanceReport(req.actor!.businessId!, from, to));
+  await withRange(req, res, getStaffPerformanceReport);
 });
 
 reportsRouter.get("/client-retention", requirePermission("reports", "view"), async (req, res) => {

@@ -108,11 +108,17 @@ export const staffApi = {
     api.post<StaffStatusChangeResult>(`/staff/${id}/status`, { newStatus }),
 };
 
+export type ReportRangeInput = { days: number } | { period: "today" | "current-month" };
+
+function reportQuery(range: ReportRangeInput) {
+  return "days" in range ? { days: String(range.days) } : { period: range.period };
+}
+
 export const reportsApi = {
-  revenue: (from: string, to: string) => api.get<RevenueReport>("/reports/revenue", { from, to }),
-  outcomes: (from: string, to: string) => api.get<OutcomeReport>("/reports/outcomes", { from, to }),
-  popularServices: (from: string, to: string) => api.get<PopularServiceEntry[]>("/reports/popular-services", { from, to }),
-  staffPerformance: (from: string, to: string) => api.get<StaffPerformanceEntry[]>("/reports/staff-performance", { from, to }),
+  revenue: (range: ReportRangeInput) => api.get<RevenueReport>("/reports/revenue", reportQuery(range)),
+  outcomes: (range: ReportRangeInput) => api.get<OutcomeReport>("/reports/outcomes", reportQuery(range)),
+  popularServices: (range: ReportRangeInput) => api.get<PopularServiceEntry[]>("/reports/popular-services", reportQuery(range)),
+  staffPerformance: (range: ReportRangeInput) => api.get<StaffPerformanceEntry[]>("/reports/staff-performance", reportQuery(range)),
   clientRetention: () => api.get<ClientRetentionReport>("/reports/client-retention"),
 };
 

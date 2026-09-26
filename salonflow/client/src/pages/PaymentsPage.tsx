@@ -23,9 +23,7 @@ const STATUS_STYLES: Record<string, string> = {
 export function PaymentsPage() {
   const { data: payments, isLoading } = usePayments();
 
-  const monthStart = new Date();
-  monthStart.setDate(1);
-  const { data: revenue } = useRevenueReport(startOfDayIso(monthStart), endOfDayIso(new Date()));
+  const { data: revenue } = useRevenueReport({ period: "current-month" });
 
   return (
     <div className="p-4 sm:p-8">

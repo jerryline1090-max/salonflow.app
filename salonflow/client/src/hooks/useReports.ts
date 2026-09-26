@@ -1,20 +1,21 @@
 import { useQuery } from "@tanstack/react-query";
 import { reportsApi } from "@/api/resources";
+import type { ReportRangeInput } from "@/api/resources";
 
-export function useRevenueReport(from: string, to: string) {
-  return useQuery({ queryKey: ["reports", "revenue", from, to], queryFn: () => reportsApi.revenue(from, to) });
+export function useRevenueReport(range: ReportRangeInput) {
+  return useQuery({ queryKey: ["reports", "revenue", range], queryFn: () => reportsApi.revenue(range) });
 }
 
-export function useOutcomeReport(from: string, to: string) {
-  return useQuery({ queryKey: ["reports", "outcomes", from, to], queryFn: () => reportsApi.outcomes(from, to) });
+export function useOutcomeReport(range: ReportRangeInput) {
+  return useQuery({ queryKey: ["reports", "outcomes", range], queryFn: () => reportsApi.outcomes(range) });
 }
 
-export function usePopularServicesReport(from: string, to: string) {
-  return useQuery({ queryKey: ["reports", "popular-services", from, to], queryFn: () => reportsApi.popularServices(from, to) });
+export function usePopularServicesReport(range: ReportRangeInput) {
+  return useQuery({ queryKey: ["reports", "popular-services", range], queryFn: () => reportsApi.popularServices(range) });
 }
 
-export function useStaffPerformanceReport(from: string, to: string) {
-  return useQuery({ queryKey: ["reports", "staff-performance", from, to], queryFn: () => reportsApi.staffPerformance(from, to) });
+export function useStaffPerformanceReport(range: ReportRangeInput) {
+  return useQuery({ queryKey: ["reports", "staff-performance", range], queryFn: () => reportsApi.staffPerformance(range) });
 }
 
 export function useClientRetentionReport() {

@@ -10,7 +10,7 @@ import { Card } from "@/components/Card";
 import { StatCard } from "@/components/StatCard";
 import { BarList } from "@/components/BarList";
 import { Button } from "@/components/Button";
-import { formatCurrency, startOfDayIso, endOfDayIso } from "@/utils/format";
+import { formatCurrency } from "@/utils/format";
 
 type RangeOption = "7d" | "30d" | "90d";
 
@@ -20,13 +20,12 @@ const RANGE_DAYS: Record<RangeOption, number> = { "7d": 7, "30d": 30, "90d": 90 
 export function ReportsPage() {
   const [range, setRange] = useState<RangeOption>("30d");
 
-  const from = startOfDayIso(new Date(Date.now() - RANGE_DAYS[range] * 24 * 60 * 60 * 1000));
-  const to = endOfDayIso(new Date());
+  const days = RANGE_DAYS[range];
 
-  const revenue = useRevenueReport(from, to);
-  const outcomes = useOutcomeReport(from, to);
-  const popularServices = usePopularServicesReport(from, to);
-  const staffPerformance = useStaffPerformanceReport(from, to);
+  const revenue = useRevenueReport({ days });
+  const outcomes = useOutcomeReport({ days });
+  const popularServices = usePopularServicesReport({ days });
+  const staffPerformance = useStaffPerformanceReport({ days });
   const retention = useClientRetentionReport();
 
   return (
@@ -46,7 +45,7 @@ export function ReportsPage() {
       </div>
 
       <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <StatCard label="Revenue" value={revenue.data ? formatCurrency(revenue.data.totalRevenue) : "—"} />
+        <StatCard label="Collected revenue" value={revenue.data ? formatCurrency(revenue.data.totalRevenue) : "—"} />
         <StatCard label="Completed" value={outcomes.data?.completed ?? "—"} />
         <StatCard label="Cancelled" value={outcomes.data?.cancelled ?? "—"} />
         <StatCard label="No-shows" value={outcomes.data?.noShow ?? "—"} />
@@ -68,15 +67,16 @@ export function ReportsPage() {
         </Card>
 
         <Card className="p-5">
-          <p className="mb-4 font-display text-lg text-ink">Staff performance</p>
+          <p className="mb-1 font-display text-lg text-ink">Staff performance</p>
+          <p className="mb-4 text-xs text-ink-muted">Completed service value, not collected payment revenue.</p>
           {!staffPerformance.data || staffPerformance.data.length === 0 ? (
             <p className="text-sm text-ink-muted">No completed appointments in this range yet.</p>
           ) : (
             <BarList
               items={staffPerformance.data.map((entry) => ({
                 label: entry.staff?.name ?? "Unknown staff",
-                value: entry.revenueGenerated,
-                displayValue: `${entry.completedAppointments} visit${entry.completedAppointments === 1 ? "" : "s"} · ${formatCurrency(entry.revenueGenerated)}`,
+                value: entry.completedServiceValue,
+                displayValue: `${entry.completedAppointments} visit${entry.completedAppointments === 1 ? "" : "s"} · ${formatCurrency(entry.completedServiceValue)}`,
               }))}
             />
           )}

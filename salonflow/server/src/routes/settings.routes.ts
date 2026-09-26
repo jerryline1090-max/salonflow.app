@@ -2,6 +2,7 @@ import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { requirePermission } from "../middleware/authorize";
 import { writeAuditLog } from "../core/auditLog";
+import { assertValidTimezone } from "../core/timezone";
 
 export const settingsRouter = Router();
 
@@ -45,6 +46,7 @@ settingsRouter.put("/", requirePermission("settings", "edit"), async (req, res) 
     for (const field of EDITABLE_FIELDS) {
       if (field in req.body) data[field] = req.body[field];
     }
+    if ("timezone" in data) assertValidTimezone(data.timezone);
 
     const updated = await prisma.business.update({ where: { id: before.id }, data });
 

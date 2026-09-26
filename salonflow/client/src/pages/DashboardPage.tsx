@@ -21,7 +21,7 @@ export function DashboardPage() {
 
   const today = useAppointments({ from, to });
   const needsAttention = useAppointments({ needsAttention: true });
-  const revenue = useRevenueReport(from, to);
+  const revenue = useRevenueReport({ period: "today" });
   const clients = useClients();
 
   const todaysAppointments = today.data ?? [];

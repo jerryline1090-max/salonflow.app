@@ -14,15 +14,19 @@ export async function getRevenueReport(businessId: string, from: Date, to: Date)
     _count: true,
   });
 
-  const outstanding = await prisma.payment.aggregate({
-    where: { businessId, status: { in: ["UNPAID", "PARTIAL"] }, createdAt: { gte: from, lte: to } },
-    _sum: { amount: true },
+  const appointments = await prisma.appointment.findMany({
+    where: { businessId, status: { not: "CANCELLED" }, startsAt: { gte: from, lte: to } },
+    select: { priceSnapshot: true, payments: { where: { status: "PAID" }, select: { amount: true } } },
   });
+  const outstandingAmount = appointments.reduce((sum, appointment) => {
+    const paidAmount = appointment.payments.reduce((paymentSum, payment) => paymentSum + payment.amount, 0);
+    return sum + Math.max(appointment.priceSnapshot - paidAmount, 0);
+  }, 0);
 
   return {
     totalRevenue: paid._sum.amount ?? 0,
     paidTransactionCount: paid._count,
-    outstandingAmount: outstanding._sum.amount ?? 0,
+    outstandingAmount,
   };
 }
 
@@ -69,7 +73,7 @@ export async function getStaffPerformanceReport(businessId: string, from: Date, 
   return grouped.map((g) => ({
     staff: staffById.get(g.staffId),
     completedAppointments: g._count.staffId,
-    revenueGenerated: g._sum.priceSnapshot ?? 0,
+    completedServiceValue: g._sum.priceSnapshot ?? 0,
   }));
 }
 
