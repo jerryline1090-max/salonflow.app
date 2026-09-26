@@ -102,7 +102,9 @@ describe("checkStaffAvailability", () => {
     (prisma.staff.findUnique as jest.Mock).mockResolvedValue(buildStaff());
     (prisma.staffSchedule.findUnique as jest.Mock).mockResolvedValue(buildSchedule());
     (prisma.staffTimeOff.findFirst as jest.Mock).mockResolvedValue(null);
-    (prisma.appointment.findFirst as jest.Mock).mockResolvedValue({ id: "existing_appt", locationType: "SALON" });
+    (prisma.appointment.findMany as jest.Mock).mockResolvedValue([
+      { id: "existing_appt", locationType: "SALON", startsAt: wednesdayAt(14), endsAt: wednesdayAt(15), travelBufferMins: 0 },
+    ]);
 
     const result = await checkStaffAvailability({
       staffId: "staff_1",
@@ -123,7 +125,9 @@ describe("checkStaffAvailability", () => {
     (prisma.business.findUnique as jest.Mock).mockResolvedValue(buildBusiness({ homeServiceTravelBufferMins: 30 }));
     // A home appointment 2:00-2:30 PM already exists; a salon slot at 2:30 PM
     // leaves zero travel time, so with a 30-min buffer this must conflict.
-    (prisma.appointment.findFirst as jest.Mock).mockResolvedValue({ id: "home_appt", locationType: "HOME" });
+    (prisma.appointment.findMany as jest.Mock).mockResolvedValue([
+      { id: "home_appt", locationType: "HOME", startsAt: wednesdayAt(14), endsAt: wednesdayAt(14, 30), travelBufferMins: 30 },
+    ]);
 
     const result = await checkStaffAvailability({
       staffId: "staff_1",
@@ -136,20 +140,34 @@ describe("checkStaffAvailability", () => {
     expect(result.available).toBe(false);
     expect(result.reason).toMatch(/travel time/i);
 
-    // The requested appointment is at the salon, but the existing HOME visit
-    // still needs travel room. Confirm the HOME-specific query branch widens
-    // the search window without imposing that buffer on salon-to-salon slots.
-    const callArgs = (prisma.appointment.findFirst as jest.Mock).mock.calls[0][0];
-    expect(callArgs.where.OR[1]).toMatchObject({ locationType: "HOME" });
-    expect(callArgs.where.OR[1].startsAt.lt.getTime()).toBe(wednesdayAt(16, 0).getTime()); // 15:30 + 30min buffer
-    expect(callArgs.where.OR[1].endsAt.gt.getTime()).toBe(wednesdayAt(14, 0).getTime()); // 14:30 - 30min buffer
+  });
+
+  it("uses the appointment's persisted buffer rather than a later business-default change", async () => {
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue(buildStaff());
+    (prisma.staffSchedule.findUnique as jest.Mock).mockResolvedValue(buildSchedule());
+    (prisma.staffTimeOff.findFirst as jest.Mock).mockResolvedValue(null);
+    (prisma.business.findUnique as jest.Mock).mockResolvedValue(buildBusiness({ homeServiceTravelBufferMins: 10 }));
+    (prisma.appointment.findMany as jest.Mock).mockResolvedValue([
+      { id: "home_appt", locationType: "HOME", startsAt: wednesdayAt(14), endsAt: wednesdayAt(14, 30), travelBufferMins: 45 },
+    ]);
+
+    const result = await checkStaffAvailability({
+      staffId: "staff_1",
+      businessId: "biz_1",
+      startsAt: wednesdayAt(15),
+      endsAt: wednesdayAt(16),
+      locationType: "SALON",
+    });
+
+    expect(result.available).toBe(false);
+    expect(result.reason).toMatch(/travel time/i);
   });
 
   it("returns available when every check passes", async () => {
     (prisma.staff.findUnique as jest.Mock).mockResolvedValue(buildStaff());
     (prisma.staffSchedule.findUnique as jest.Mock).mockResolvedValue(buildSchedule());
     (prisma.staffTimeOff.findFirst as jest.Mock).mockResolvedValue(null);
-    (prisma.appointment.findFirst as jest.Mock).mockResolvedValue(null);
+    (prisma.appointment.findMany as jest.Mock).mockResolvedValue([]);
 
     const result = await checkStaffAvailability({
       staffId: "staff_1",

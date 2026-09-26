@@ -29,6 +29,20 @@ export interface CreateAppointmentInput {
 }
 
 export async function createAppointment(input: CreateAppointmentInput) {
+  assertValidDate(input.startsAt, "Appointment start time");
+  assertLocationType(input.locationType);
+  assertBookingChannel(input.bookingChannel);
+  if (!input.clientId || !input.serviceId || !input.staffId) {
+    throw new Error("Client, service, and staff are required");
+  }
+  if (input.locationType === "HOME" && !input.homeAddress?.trim()) {
+    throw new Error("A home address is required for home appointments");
+  }
+
+  const client = await prisma.client.findUnique({ where: { id: input.clientId } });
+  if (!client || client.businessId !== input.businessId) {
+    throw new Error("Client not found for this business");
+  }
   const service = await prisma.service.findUnique({ where: { id: input.serviceId } });
   if (!service || service.businessId !== input.businessId) {
     throw new Error("Service not found for this business");
@@ -43,7 +57,27 @@ export async function createAppointment(input: CreateAppointmentInput) {
     throw new Error("This service is not offered at the salon");
   }
 
+  const staff = await prisma.staff.findUnique({ where: { id: input.staffId } });
+  if (!staff || staff.businessId !== input.businessId) {
+    throw new Error("Staff member not found for this business");
+  }
+  if (staff.status !== "ACTIVE") {
+    throw new Error("Staff member is not active");
+  }
+  if (input.locationType === "HOME" && !staff.homeServiceEligible) {
+    throw new Error("Staff member is not eligible for home service");
+  }
+  const staffService = await prisma.staffService.findUnique({
+    where: { staffId_serviceId: { staffId: staff.id, serviceId: service.id } },
+  });
+  if (!staffService) {
+    throw new Error("Staff member is not qualified to perform this service");
+  }
+
   const business = await prisma.business.findUnique({ where: { id: input.businessId } });
+  if (!business) {
+    throw new Error("Business not found");
+  }
   const travelBufferMins =
     input.locationType === "HOME"
       ? service.homeTravelBufferMins ?? business?.homeServiceTravelBufferMins ?? 0
@@ -58,41 +92,45 @@ export async function createAppointment(input: CreateAppointmentInput) {
     startsAt: input.startsAt,
     endsAt,
     locationType: input.locationType,
+    travelBufferMins,
   });
   if (!availability.available) {
     throw new Error(`Cannot book this slot: ${availability.reason}`);
   }
 
-  const appointment = await prisma.appointment.create({
-    data: {
-      businessId: input.businessId,
-      clientId: input.clientId,
-      serviceId: input.serviceId,
-      staffId: input.staffId,
-      status: "PENDING",
-      locationType: input.locationType,
-      homeAddress: input.homeAddress,
-      startsAt: input.startsAt,
-      endsAt,
-      travelBufferMins,
-      bookingChannel: input.bookingChannel,
-      // Snapshot price/duration NOW so a later Service price change never
-      // rewrites this appointment's historical numbers (section 13).
-      priceSnapshot: service.price,
-      durationSnapshot: service.durationMinutes,
-      notes: input.notes,
-    },
-  });
+  const appointment = await prisma.$transaction(async (tx) => {
+    const created = await tx.appointment.create({
+      data: {
+        businessId: input.businessId,
+        clientId: input.clientId,
+        serviceId: input.serviceId,
+        staffId: input.staffId,
+        status: "PENDING",
+        locationType: input.locationType,
+        homeAddress: input.homeAddress?.trim(),
+        startsAt: input.startsAt,
+        endsAt,
+        travelBufferMins,
+        bookingChannel: input.bookingChannel,
+        // Snapshot price/duration NOW so a later Service price change never
+        // rewrites this appointment's historical numbers (section 13).
+        priceSnapshot: service.price,
+        durationSnapshot: service.durationMinutes,
+        notes: input.notes,
+      },
+    });
 
-  await prisma.appointmentEvent.create({
-    data: {
-      appointmentId: appointment.id,
-      type: "CREATED",
-      newValue: JSON.stringify({ status: "PENDING", staffId: input.staffId, startsAt: input.startsAt }),
-      actorType: input.actor.type,
-      actorUserId: input.actor.userId,
-      actorStaffId: input.actor.staffId,
-    },
+    await tx.appointmentEvent.create({
+      data: {
+        appointmentId: created.id,
+        type: "CREATED",
+        newValue: JSON.stringify({ status: "PENDING", staffId: input.staffId, startsAt: input.startsAt }),
+        actorType: input.actor.type,
+        actorUserId: input.actor.userId,
+        actorStaffId: input.actor.staffId,
+      },
+    });
+    return created;
   });
 
   await writeAuditLog({
@@ -196,10 +234,14 @@ export interface RescheduleInput {
 }
 
 export async function rescheduleAppointment(input: RescheduleInput) {
+  assertValidDate(input.newStartsAt, "Appointment start time");
   const appointment = await prisma.appointment.findUniqueOrThrow({ where: { id: input.appointmentId } });
   const service = await prisma.service.findUniqueOrThrow({ where: { id: appointment.serviceId } });
 
-  const durationWithBuffer = service.durationMinutes + service.bufferMinutes;
+  // `durationSnapshot` is the historical service duration. There is no
+  // buffer snapshot in the current schema, so the existing service buffer is
+  // retained until a future migration can snapshot it too.
+  const durationWithBuffer = appointment.durationSnapshot + service.bufferMinutes;
   const newEndsAt = new Date(input.newStartsAt.getTime() + durationWithBuffer * 60_000);
 
   const availability = await checkStaffAvailability({
@@ -208,27 +250,30 @@ export async function rescheduleAppointment(input: RescheduleInput) {
     startsAt: input.newStartsAt,
     endsAt: newEndsAt,
     locationType: appointment.locationType,
+    travelBufferMins: appointment.travelBufferMins,
     excludeAppointmentId: appointment.id,
   });
   if (!availability.available) {
     throw new Error(`Cannot reschedule to this slot: ${availability.reason}`);
   }
 
-  const updated = await prisma.appointment.update({
-    where: { id: appointment.id },
-    data: { startsAt: input.newStartsAt, endsAt: newEndsAt },
-  });
-
-  await prisma.appointmentEvent.create({
-    data: {
-      appointmentId: appointment.id,
-      type: "RESCHEDULED",
-      previousValue: JSON.stringify({ startsAt: appointment.startsAt }),
-      newValue: JSON.stringify({ startsAt: input.newStartsAt }),
-      actorType: input.actor.type,
-      actorUserId: input.actor.userId,
-      actorStaffId: input.actor.staffId,
-    },
+  const updated = await prisma.$transaction(async (tx) => {
+    const rescheduled = await tx.appointment.update({
+      where: { id: appointment.id },
+      data: { startsAt: input.newStartsAt, endsAt: newEndsAt },
+    });
+    await tx.appointmentEvent.create({
+      data: {
+        appointmentId: appointment.id,
+        type: "RESCHEDULED",
+        previousValue: JSON.stringify({ startsAt: appointment.startsAt }),
+        newValue: JSON.stringify({ startsAt: input.newStartsAt }),
+        actorType: input.actor.type,
+        actorUserId: input.actor.userId,
+        actorStaffId: input.actor.staffId,
+      },
+    });
+    return rescheduled;
   });
 
   await writeAuditLog({
@@ -257,6 +302,22 @@ export interface ReassignStaffInput {
 /** Section 11: staff reassignment must be recorded and the client notified — never silent. */
 export async function reassignAppointmentStaff(input: ReassignStaffInput) {
   const appointment = await prisma.appointment.findUniqueOrThrow({ where: { id: input.appointmentId } });
+  const staff = await prisma.staff.findUnique({ where: { id: input.newStaffId } });
+  if (!staff || staff.businessId !== appointment.businessId) {
+    throw new Error("Staff member not found for this business");
+  }
+  if (staff.status !== "ACTIVE") {
+    throw new Error("Staff member is not active");
+  }
+  if (appointment.locationType === "HOME" && !staff.homeServiceEligible) {
+    throw new Error("Staff member is not eligible for home service");
+  }
+  const staffService = await prisma.staffService.findUnique({
+    where: { staffId_serviceId: { staffId: staff.id, serviceId: appointment.serviceId } },
+  });
+  if (!staffService) {
+    throw new Error("Staff member is not qualified to perform this service");
+  }
 
   const availability = await checkStaffAvailability({
     staffId: input.newStaffId,
@@ -264,26 +325,29 @@ export async function reassignAppointmentStaff(input: ReassignStaffInput) {
     startsAt: appointment.startsAt,
     endsAt: appointment.endsAt,
     locationType: appointment.locationType,
+    travelBufferMins: appointment.travelBufferMins,
   });
   if (!availability.available) {
     throw new Error(`Cannot reassign to this staff member: ${availability.reason}`);
   }
 
-  const updated = await prisma.appointment.update({
-    where: { id: appointment.id },
-    data: { staffId: input.newStaffId },
-  });
-
-  await prisma.appointmentEvent.create({
-    data: {
-      appointmentId: appointment.id,
-      type: "REASSIGNED",
-      previousValue: JSON.stringify({ staffId: appointment.staffId }),
-      newValue: JSON.stringify({ staffId: input.newStaffId }),
-      reason: input.reason,
-      actorType: input.actor.type,
-      actorUserId: input.actor.userId,
-    },
+  const updated = await prisma.$transaction(async (tx) => {
+    const reassigned = await tx.appointment.update({
+      where: { id: appointment.id },
+      data: { staffId: input.newStaffId },
+    });
+    await tx.appointmentEvent.create({
+      data: {
+        appointmentId: appointment.id,
+        type: "REASSIGNED",
+        previousValue: JSON.stringify({ staffId: appointment.staffId }),
+        newValue: JSON.stringify({ staffId: input.newStaffId }),
+        reason: input.reason,
+        actorType: input.actor.type,
+        actorUserId: input.actor.userId,
+      },
+    });
+    return reassigned;
   });
 
   await writeAuditLog({
@@ -354,4 +418,22 @@ export async function acknowledgeAttention(input: AcknowledgeAttentionInput) {
   });
 
   return updated;
+}
+
+function assertValidDate(value: Date, label: string) {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) {
+    throw new Error(`${label} must be a valid date`);
+  }
+}
+
+function assertLocationType(value: unknown): asserts value is LocationType {
+  if (value !== "SALON" && value !== "HOME") {
+    throw new Error("Location type must be SALON or HOME");
+  }
+}
+
+function assertBookingChannel(value: unknown): asserts value is BookingChannel {
+  if (!Object.values(BookingChannel).includes(value as BookingChannel)) {
+    throw new Error("Booking channel is invalid");
+  }
 }

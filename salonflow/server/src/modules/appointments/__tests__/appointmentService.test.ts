@@ -14,13 +14,17 @@ import {
   acknowledgeAttention,
 } from "../appointmentService";
 import { InvalidStatusTransitionError } from "../appointmentStateMachine";
-import { buildService, buildBusiness, buildAppointment, wednesdayAt } from "../../../test-utils/factories";
+import { buildService, buildBusiness, buildAppointment, buildClient, buildStaff, wednesdayAt } from "../../../test-utils/factories";
 
 const actor = { type: "USER" as const, userId: "user_1" };
 
 beforeEach(() => {
   jest.spyOn(eventBus, "emit").mockResolvedValue(undefined);
   (writeAuditLog as jest.Mock).mockResolvedValue(undefined);
+  (prisma.client.findUnique as jest.Mock).mockResolvedValue(buildClient());
+  (prisma.staff.findUnique as jest.Mock).mockResolvedValue(buildStaff());
+  (prisma.staffService.findUnique as jest.Mock).mockResolvedValue({ id: "staff_service_1" });
+  (prisma.$transaction as jest.Mock).mockImplementation(async (callback) => callback(prisma));
 });
 
 describe("createAppointment", () => {
@@ -48,10 +52,30 @@ describe("createAppointment", () => {
     await expect(createAppointment(baseInput)).rejects.toThrow(/no longer offered/i);
   });
 
+  it("rejects a client from another business before creating an appointment", async () => {
+    (prisma.client.findUnique as jest.Mock).mockResolvedValue(buildClient({ businessId: "other_biz" }));
+
+    await expect(createAppointment(baseInput)).rejects.toThrow(/client not found/i);
+    expect(prisma.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a staff member who is not qualified for the selected service", async () => {
+    (prisma.service.findUnique as jest.Mock).mockResolvedValue(buildService());
+    (prisma.staffService.findUnique as jest.Mock).mockResolvedValue(null);
+
+    await expect(createAppointment(baseInput)).rejects.toThrow(/not qualified/i);
+    expect(prisma.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it("requires a valid start date and a home address for home appointments", async () => {
+    await expect(createAppointment({ ...baseInput, startsAt: new Date("not-a-date") })).rejects.toThrow(/valid date/i);
+    await expect(createAppointment({ ...baseInput, locationType: "HOME" })).rejects.toThrow(/home address/i);
+  });
+
   it("rejects a home-service booking for a service not offered as home service", async () => {
     (prisma.service.findUnique as jest.Mock).mockResolvedValue(buildService({ availableAtHome: false }));
 
-    await expect(createAppointment({ ...baseInput, locationType: "HOME" })).rejects.toThrow(/not offered as a home service/i);
+    await expect(createAppointment({ ...baseInput, locationType: "HOME", homeAddress: "12 Test Street" })).rejects.toThrow(/not offered as a home service/i);
   });
 
   it("rejects a salon booking for a home-only service", async () => {
@@ -177,7 +201,7 @@ describe("rescheduleAppointment", () => {
   });
 
   it("moves the appointment and records a RESCHEDULED event, excluding itself from the conflict check", async () => {
-    const existing = buildAppointment();
+    const existing = buildAppointment({ durationSnapshot: 120, travelBufferMins: 45, locationType: "HOME" });
     (prisma.appointment.findUniqueOrThrow as jest.Mock).mockResolvedValue(existing);
     (prisma.service.findUniqueOrThrow as jest.Mock).mockResolvedValue(buildService());
     (checkStaffAvailability as jest.Mock).mockResolvedValue({ available: true });
@@ -186,6 +210,9 @@ describe("rescheduleAppointment", () => {
     await rescheduleAppointment({ appointmentId: "appt_1", newStartsAt: wednesdayAt(16), actor });
 
     expect(checkStaffAvailability).toHaveBeenCalledWith(expect.objectContaining({ excludeAppointmentId: "appt_1" }));
+    expect(checkStaffAvailability).toHaveBeenCalledWith(expect.objectContaining({ travelBufferMins: 45 }));
+    const updateData = (prisma.appointment.update as jest.Mock).mock.calls[0][0].data;
+    expect(updateData.endsAt.getTime()).toBe(wednesdayAt(16).getTime() + 135 * 60_000);
     expect(prisma.appointmentEvent.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ type: "RESCHEDULED" }) })
     );
@@ -201,6 +228,16 @@ describe("reassignAppointmentStaff", () => {
     await expect(
       reassignAppointmentStaff({ appointmentId: "appt_1", newStaffId: "staff_2", actor })
     ).rejects.toThrow(/Staff member is inactive/);
+    expect(prisma.appointment.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects reassignment to a staff member not qualified for the appointment service", async () => {
+    (prisma.appointment.findUniqueOrThrow as jest.Mock).mockResolvedValue(buildAppointment());
+    (prisma.staffService.findUnique as jest.Mock).mockResolvedValue(null);
+
+    await expect(
+      reassignAppointmentStaff({ appointmentId: "appt_1", newStaffId: "staff_2", actor })
+    ).rejects.toThrow(/not qualified/i);
     expect(prisma.appointment.update).not.toHaveBeenCalled();
   });
 

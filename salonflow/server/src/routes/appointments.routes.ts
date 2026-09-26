@@ -114,6 +114,12 @@ appointmentsRouter.post("/:id/reschedule", requirePermission("appointments", "ed
   try {
     const existing = await prisma.appointment.findUniqueOrThrow({ where: { id: req.params.id } });
     assertBelongsToBusiness(req.actor!, existing.businessId, "appointment");
+    if (req.actor!.role === "STAFF") {
+      const ownStaffId = await resolveOwnStaffId(req.actor!.userId);
+      if (existing.staffId !== ownStaffId) {
+        return res.status(403).json({ error: "You can only update your own appointments" });
+      }
+    }
 
     const updated = await rescheduleAppointment({
       appointmentId: req.params.id,

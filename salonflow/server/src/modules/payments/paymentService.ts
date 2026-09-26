@@ -19,29 +19,67 @@ export interface RecordPaymentInput {
 }
 
 export async function recordPayment(input: RecordPaymentInput) {
-  const payment = await prisma.payment.create({
-    data: {
-      businessId: input.businessId,
-      clientId: input.clientId,
-      appointmentId: input.appointmentId,
-      amount: input.amount,
-      method: input.method,
-      status: "PAID",
-      paidAt: new Date(),
-    },
-  });
+  if (!input.clientId) throw new Error("Client is required");
+  if (!Number.isSafeInteger(input.amount) || input.amount <= 0) {
+    throw new Error("Payment amount must be a positive whole number in minor units");
+  }
+  if (!Object.values(PaymentMethod).includes(input.method)) {
+    throw new Error("Payment method is invalid");
+  }
 
+  const client = await prisma.client.findUnique({ where: { id: input.clientId } });
+  if (!client || client.businessId !== input.businessId) {
+    throw new Error("Client not found for this business");
+  }
+
+  let appointment: { id: string; clientId: string; businessId: string; priceSnapshot: number } | null = null;
   if (input.appointmentId) {
-    await prisma.appointmentEvent.create({
+    appointment = await prisma.appointment.findUnique({ where: { id: input.appointmentId } });
+    if (!appointment || appointment.businessId !== input.businessId) {
+      throw new Error("Appointment not found for this business");
+    }
+    if (appointment.clientId !== input.clientId) {
+      throw new Error("Payment client must match the appointment client");
+    }
+  }
+
+  const payment = await prisma.$transaction(async (tx) => {
+    if (appointment) {
+      const paid = await tx.payment.aggregate({
+        where: { appointmentId: appointment.id, status: "PAID" },
+        _sum: { amount: true },
+      });
+      const outstanding = Math.max(appointment.priceSnapshot - (paid._sum.amount ?? 0), 0);
+      if (input.amount > outstanding) {
+        throw new Error("Payment amount exceeds the appointment outstanding balance");
+      }
+    }
+
+    const created = await tx.payment.create({
       data: {
+        businessId: input.businessId,
+        clientId: input.clientId,
         appointmentId: input.appointmentId,
-        type: "PAYMENT_ADDED",
-        newValue: JSON.stringify({ amount: input.amount, method: input.method }),
-        actorType: "USER",
-        actorUserId: input.actorUserId,
+        amount: input.amount,
+        method: input.method,
+        status: "PAID",
+        paidAt: new Date(),
       },
     });
-  }
+
+    if (appointment) {
+      await tx.appointmentEvent.create({
+        data: {
+          appointmentId: appointment.id,
+          type: "PAYMENT_ADDED",
+          newValue: JSON.stringify({ amount: input.amount, method: input.method }),
+          actorType: "USER",
+          actorUserId: input.actorUserId,
+        },
+      });
+    }
+    return created;
+  }, { isolationLevel: "Serializable" });
 
   await writeAuditLog({
     businessId: input.businessId,

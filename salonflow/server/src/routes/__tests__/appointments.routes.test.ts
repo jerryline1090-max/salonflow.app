@@ -7,7 +7,7 @@ import { prisma } from "../../lib/prisma";
 import { authenticate } from "../../middleware/authenticate";
 import { appointmentsRouter } from "../appointments.routes";
 import { signToken } from "../../core/auth";
-import { reassignAppointmentStaff, acknowledgeAttention } from "../../modules/appointments/appointmentService";
+import { reassignAppointmentStaff, acknowledgeAttention, rescheduleAppointment } from "../../modules/appointments/appointmentService";
 import { buildAppointment } from "../../test-utils/factories";
 
 function buildApp() {
@@ -136,6 +136,21 @@ describe("POST /api/appointments/:id/acknowledge-attention", () => {
 
     expect(res.status).toBe(403);
     expect(acknowledgeAttention).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/appointments/:id/reschedule", () => {
+  it("403s a STAFF user attempting to reschedule another staff member's appointment", async () => {
+    (prisma.appointment.findUniqueOrThrow as jest.Mock).mockResolvedValue(buildAppointment({ businessId: "biz_1", staffId: "someone_else" }));
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue({ id: "staff_1" });
+
+    const res = await request(buildApp())
+      .post("/api/appointments/appt_1/reschedule")
+      .set("Authorization", `Bearer ${staffToken}`)
+      .send({ newStartsAt: "2026-08-26T16:00:00.000Z" });
+
+    expect(res.status).toBe(403);
+    expect(rescheduleAppointment).not.toHaveBeenCalled();
   });
 });
 

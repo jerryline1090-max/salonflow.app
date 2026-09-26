@@ -5,11 +5,13 @@ import { prisma } from "../../../lib/prisma";
 import { eventBus } from "../../../core/eventBus";
 import { writeAuditLog } from "../../../core/auditLog";
 import { recordPayment, getOutstandingBalance } from "../paymentService";
-import { buildAppointment } from "../../../test-utils/factories";
+import { buildAppointment, buildClient } from "../../../test-utils/factories";
 
 beforeEach(() => {
   jest.spyOn(eventBus, "emit").mockResolvedValue(undefined);
   (writeAuditLog as jest.Mock).mockResolvedValue(undefined);
+  (prisma.client.findUnique as jest.Mock).mockResolvedValue(buildClient());
+  (prisma.$transaction as jest.Mock).mockImplementation(async (callback) => callback(prisma));
 });
 
 describe("getOutstandingBalance", () => {
@@ -46,6 +48,8 @@ describe("getOutstandingBalance", () => {
 describe("recordPayment", () => {
   it("creates a payment, links a PAYMENT_ADDED event to the appointment, and emits payment.recorded", async () => {
     const payment = { id: "pay_1", amount: 1_000_000 };
+    (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(buildAppointment());
+    (prisma.payment.aggregate as jest.Mock).mockResolvedValue({ _sum: { amount: 0 } });
     (prisma.payment.create as jest.Mock).mockResolvedValue(payment);
 
     await recordPayment({
@@ -76,5 +80,39 @@ describe("recordPayment", () => {
     });
 
     expect(prisma.appointmentEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects payments for a client outside the current business", async () => {
+    (prisma.client.findUnique as jest.Mock).mockResolvedValue(buildClient({ businessId: "other_biz" }));
+
+    await expect(
+      recordPayment({ businessId: "biz_1", clientId: "client_1", amount: 100, method: "CASH", actorUserId: "user_1" })
+    ).rejects.toThrow(/client not found/i);
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a payment whose client does not match the linked appointment", async () => {
+    (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(buildAppointment({ clientId: "other_client" }));
+
+    await expect(
+      recordPayment({ businessId: "biz_1", clientId: "client_1", appointmentId: "appt_1", amount: 100, method: "CASH", actorUserId: "user_1" })
+    ).rejects.toThrow(/must match/i);
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-positive, fractional, and overpayment amounts", async () => {
+    await expect(
+      recordPayment({ businessId: "biz_1", clientId: "client_1", amount: 0, method: "CASH", actorUserId: "user_1" })
+    ).rejects.toThrow(/positive whole number/i);
+    await expect(
+      recordPayment({ businessId: "biz_1", clientId: "client_1", amount: 1.5, method: "CASH", actorUserId: "user_1" })
+    ).rejects.toThrow(/positive whole number/i);
+
+    (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(buildAppointment({ priceSnapshot: 100 }));
+    (prisma.payment.aggregate as jest.Mock).mockResolvedValue({ _sum: { amount: 90 } });
+    await expect(
+      recordPayment({ businessId: "biz_1", clientId: "client_1", appointmentId: "appt_1", amount: 11, method: "CASH", actorUserId: "user_1" })
+    ).rejects.toThrow(/exceeds/i);
+    expect(prisma.payment.create).not.toHaveBeenCalled();
   });
 });

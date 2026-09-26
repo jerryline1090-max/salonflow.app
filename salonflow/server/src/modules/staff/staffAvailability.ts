@@ -7,6 +7,9 @@ export interface AvailabilityCheckInput {
   startsAt: Date;
   endsAt: Date; // requested service window, buffer already included by caller
   locationType: LocationType;
+  // Historical appointments persist their resolved travel buffer. New
+  // requests pass the service-specific value selected at booking time.
+  travelBufferMins?: number;
   excludeAppointmentId?: string; // when checking availability for a reschedule of the same appointment
 }
 
@@ -68,33 +71,28 @@ export async function checkStaffAvailability(input: AvailabilityCheckInput): Pro
   }
 
   // Travel must be available when either side of a handoff is a home visit.
-  // A SALON request therefore still needs to inspect nearby HOME appointments;
-  // otherwise a home visit ending at 2:30 could be followed by a salon slot at
-  // 2:30 even though the staff member has no time to return.
-  const bufferMins = await resolveHomeTravelBufferMinutes(input.businessId);
-
-  const bufferedStart = addMinutes(input.startsAt, -bufferMins);
-  const bufferedEnd = addMinutes(input.endsAt, bufferMins);
-
-  const conflict = await prisma.appointment.findFirst({
+  // Existing appointments use their historical `travelBufferMins`; a new
+  // request uses its resolved service-specific value. This avoids rewriting
+  // old travel assumptions when a business changes its default later.
+  const defaultBufferMins = await resolveHomeTravelBufferMinutes(input.businessId);
+  const requestedTravelBufferMins =
+    input.locationType === "HOME" ? input.travelBufferMins ?? defaultBufferMins : 0;
+  const existingAppointments = await prisma.appointment.findMany({
     where: {
       staffId: input.staffId,
       id: input.excludeAppointmentId ? { not: input.excludeAppointmentId } : undefined,
       status: { in: ["PENDING", "CONFIRMED"] },
-      OR:
-        input.locationType === "HOME"
-          ? [
-              // The requested home visit needs travel room before and after it,
-              // regardless of the other appointment's location.
-              { startsAt: { lt: bufferedEnd }, endsAt: { gt: bufferedStart } },
-            ]
-          : [
-              // Normal salon-to-salon overlap does not require travel time.
-              { startsAt: { lt: input.endsAt }, endsAt: { gt: input.startsAt } },
-              // But an existing home visit needs travel room on either side.
-              { locationType: "HOME", startsAt: { lt: bufferedEnd }, endsAt: { gt: bufferedStart } },
-            ],
     },
+    select: { id: true, startsAt: true, endsAt: true, locationType: true, travelBufferMins: true },
+  });
+
+  const requestedStart = addMinutes(input.startsAt, -requestedTravelBufferMins);
+  const requestedEnd = addMinutes(input.endsAt, requestedTravelBufferMins);
+  const conflict = existingAppointments.find((appointment) => {
+    const existingTravelBufferMins = appointment.locationType === "HOME" ? appointment.travelBufferMins : 0;
+    const existingStart = addMinutes(appointment.startsAt, -existingTravelBufferMins);
+    const existingEnd = addMinutes(appointment.endsAt, existingTravelBufferMins);
+    return existingStart < requestedEnd && existingEnd > requestedStart;
   });
 
   if (conflict) {
