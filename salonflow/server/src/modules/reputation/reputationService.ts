@@ -135,7 +135,7 @@ function parseSentiment(text: string, happyThreshold: number): ParsedSentiment {
 
   const lower = text.toLowerCase();
   const positiveWords = ["great", "amazing", "love", "loved", "excellent", "happy", "good", "fantastic", "wonderful", "perfect"];
-  const negativeWords = ["bad", "terrible", "unhappy", "disappointed", "poor", "awful", "hate", "worst", "rude"];
+  const negativeWords = ["bad", "terrible", "unhappy", "disappointed", "disappointing", "poor", "awful", "hate", "worst", "rude"];
 
   if (negativeWords.some((w) => lower.includes(w))) return { sentiment: "UNHAPPY" };
   if (positiveWords.some((w) => lower.includes(w))) return { sentiment: "HAPPY" };

@@ -53,21 +53,44 @@ export async function ingestInboundMessage(msg: UnifiedInboundMessage) {
     if (existing) return { conversation: conversationWithClient, message: existing, duplicate: true };
   }
 
-  const message = await prisma.conversationMessage.create({
-    data: {
-      conversationId: conversationWithClient.id,
-      direction: "INBOUND",
-      actorType: "CLIENT",
-      type: msg.type,
-      text: msg.text ?? null, // caption for media, body for text
-      mediaType: msg.mediaMimeType,
-      mediaSecureRef: msg.mediaSecureRef,
-      mediaProcessingStatus: msg.type === "TEXT" ? null : "PENDING",
-      externalMessageId: msg.externalMessageId,
-    },
-  });
+  try {
+    const message = await prisma.conversationMessage.create({
+      data: {
+        conversationId: conversationWithClient.id,
+        direction: "INBOUND",
+        actorType: "CLIENT",
+        type: msg.type,
+        text: msg.text ?? null, // caption for media, body for text
+        mediaType: msg.mediaMimeType,
+        mediaSecureRef: msg.mediaSecureRef,
+        mediaProcessingStatus: msg.type === "TEXT" ? null : "PENDING",
+        externalMessageId: msg.externalMessageId,
+      },
+    });
+    return { conversation: conversationWithClient, message, duplicate: false };
+  } catch (error) {
+    if (!msg.externalMessageId || !isConversationMessageIdempotencyConflict(error)) throw error;
+    const existing = await prisma.conversationMessage.findFirst({
+      where: { conversationId: conversationWithClient.id, externalMessageId: msg.externalMessageId },
+    });
+    // The unique index is the final authority. Only convert its exact race
+    // condition into a no-op after confirming the matching tenant conversation.
+    if (existing) return { conversation: conversationWithClient, message: existing, duplicate: true };
+    throw error;
+  }
 
-  return { conversation: conversationWithClient, message, duplicate: false };
+}
+
+function isConversationMessageIdempotencyConflict(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as { code?: unknown; meta?: { target?: unknown } };
+  if (candidate.code !== "P2002") return false;
+  const target = candidate.meta?.target;
+  return (
+    Array.isArray(target) &&
+    target.includes("conversationId") &&
+    target.includes("externalMessageId")
+  );
 }
 
 /** Recent context for the AI — oldest first, so it reads like the actual conversation. */

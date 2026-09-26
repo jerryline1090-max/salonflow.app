@@ -67,13 +67,11 @@ export async function checkStaffAvailability(input: AvailabilityCheckInput): Pro
     return { available: false, reason: "Staff member has approved time off during this window" };
   }
 
-  // Pull the buffer window: for HOME appointments, extend the "busy" window
-  // on both sides by the travel buffer, so a back-to-back booking that
-  // doesn't leave travel time is rejected rather than silently double-booked.
-  const bufferMins =
-    input.locationType === "HOME"
-      ? await resolveHomeTravelBufferMinutes(input.businessId)
-      : 0;
+  // Travel must be available when either side of a handoff is a home visit.
+  // A SALON request therefore still needs to inspect nearby HOME appointments;
+  // otherwise a home visit ending at 2:30 could be followed by a salon slot at
+  // 2:30 even though the staff member has no time to return.
+  const bufferMins = await resolveHomeTravelBufferMinutes(input.businessId);
 
   const bufferedStart = addMinutes(input.startsAt, -bufferMins);
   const bufferedEnd = addMinutes(input.endsAt, bufferMins);
@@ -83,8 +81,19 @@ export async function checkStaffAvailability(input: AvailabilityCheckInput): Pro
       staffId: input.staffId,
       id: input.excludeAppointmentId ? { not: input.excludeAppointmentId } : undefined,
       status: { in: ["PENDING", "CONFIRMED"] },
-      startsAt: { lt: bufferedEnd },
-      endsAt: { gt: bufferedStart },
+      OR:
+        input.locationType === "HOME"
+          ? [
+              // The requested home visit needs travel room before and after it,
+              // regardless of the other appointment's location.
+              { startsAt: { lt: bufferedEnd }, endsAt: { gt: bufferedStart } },
+            ]
+          : [
+              // Normal salon-to-salon overlap does not require travel time.
+              { startsAt: { lt: input.endsAt }, endsAt: { gt: input.startsAt } },
+              // But an existing home visit needs travel room on either side.
+              { locationType: "HOME", startsAt: { lt: bufferedEnd }, endsAt: { gt: bufferedStart } },
+            ],
     },
   });
 

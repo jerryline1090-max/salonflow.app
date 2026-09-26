@@ -56,6 +56,28 @@ export interface ExchangedToken {
   expiresInSeconds?: number;
 }
 
+type JsonObject = Record<string, unknown>;
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function parseTokenResponse(data: unknown): ExchangedToken {
+  if (!isJsonObject(data)) throw new Error("Meta token exchange returned an invalid response");
+  const accessToken = asString(data.access_token);
+  if (!accessToken) throw new Error("Meta token exchange returned no access token");
+  const expiresInSeconds = typeof data.expires_in === "number" ? data.expires_in : undefined;
+  return { accessToken, expiresInSeconds };
+}
+
 export async function exchangeCodeForToken(creds: MetaAppCredentials, code: string): Promise<ExchangedToken> {
   const params = new URLSearchParams({
     client_id: creds.appId,
@@ -65,8 +87,7 @@ export async function exchangeCodeForToken(creds: MetaAppCredentials, code: stri
   });
   const res = await fetch(`${GRAPH_API_BASE}/oauth/access_token?${params.toString()}`);
   if (!res.ok) throw new Error(`Meta token exchange failed: ${res.status} ${res.statusText}`);
-  const data = await res.json();
-  return { accessToken: data.access_token, expiresInSeconds: data.expires_in };
+  return parseTokenResponse(await res.json());
 }
 
 /** Short-lived user tokens are only good for ~1-2 hours; integrations should run on the long-lived (~60 day) version. */
@@ -79,8 +100,7 @@ export async function exchangeForLongLivedToken(creds: MetaAppCredentials, short
   });
   const res = await fetch(`${GRAPH_API_BASE}/oauth/access_token?${params.toString()}`);
   if (!res.ok) throw new Error(`Meta long-lived token exchange failed: ${res.status} ${res.statusText}`);
-  const data = await res.json();
-  return { accessToken: data.access_token, expiresInSeconds: data.expires_in };
+  return parseTokenResponse(await res.json());
 }
 
 export interface WhatsAppAccountOption {
@@ -101,12 +121,22 @@ export async function listWhatsAppBusinessAccounts(accessToken: string): Promise
   );
   if (!res.ok) throw new Error(`Failed to list WhatsApp Business Accounts: ${res.status} ${res.statusText}`);
   const data = await res.json();
+  if (!isJsonObject(data)) throw new Error("Meta WhatsApp account list returned an invalid response");
 
   const options: WhatsAppAccountOption[] = [];
-  for (const business of data.data ?? []) {
-    for (const waba of business.owned_whatsapp_business_accounts?.data ?? []) {
-      for (const phone of waba.phone_numbers?.data ?? []) {
-        options.push({ phoneNumberId: phone.id, displayPhoneNumber: phone.display_phone_number });
+  for (const business of asArray(data.data)) {
+    if (!isJsonObject(business)) continue;
+    const wabas = isJsonObject(business.owned_whatsapp_business_accounts) ? business.owned_whatsapp_business_accounts : undefined;
+    for (const waba of asArray(wabas?.data)) {
+      if (!isJsonObject(waba)) continue;
+      const phoneNumbers = isJsonObject(waba.phone_numbers) ? waba.phone_numbers : undefined;
+      for (const phone of asArray(phoneNumbers?.data)) {
+        if (!isJsonObject(phone)) continue;
+        const phoneNumberId = asString(phone.id);
+        const displayPhoneNumber = asString(phone.display_phone_number);
+        if (phoneNumberId && displayPhoneNumber) {
+          options.push({ phoneNumberId, displayPhoneNumber });
+        }
       }
     }
   }
@@ -122,8 +152,14 @@ export async function listInstagramAccounts(accessToken: string): Promise<Instag
   const res = await fetch(`${GRAPH_API_BASE}/me/accounts?fields=name,instagram_business_account{username}&access_token=${accessToken}`);
   if (!res.ok) throw new Error(`Failed to list Instagram accounts: ${res.status} ${res.statusText}`);
   const data = await res.json();
+  if (!isJsonObject(data)) throw new Error("Meta Instagram account list returned an invalid response");
 
-  return (data.data ?? [])
-    .filter((page: any) => page.instagram_business_account)
-    .map((page: any) => ({ igAccountId: page.instagram_business_account.id, username: page.instagram_business_account.username ?? page.name }));
+  const options: InstagramAccountOption[] = [];
+  for (const page of asArray(data.data)) {
+    if (!isJsonObject(page) || !isJsonObject(page.instagram_business_account)) continue;
+    const igAccountId = asString(page.instagram_business_account.id);
+    const username = asString(page.instagram_business_account.username) ?? asString(page.name);
+    if (igAccountId && username) options.push({ igAccountId, username });
+  }
+  return options;
 }

@@ -26,7 +26,7 @@ describe("registerBusiness", () => {
     (prisma.user.findUnique as jest.Mock).mockResolvedValue({ id: "existing_user" });
 
     await expect(
-      registerBusiness({ businessName: "Big Kitchen", ownerName: "Amaka", email: "amaka@test.com", password: "pw" })
+      registerBusiness({ businessName: "Big Kitchen", ownerName: "Amaka", email: "amaka@test.com", password: "pw123456" })
     ).rejects.toThrow(/already exists/i);
 
     expect(prisma.business.create).not.toHaveBeenCalled();

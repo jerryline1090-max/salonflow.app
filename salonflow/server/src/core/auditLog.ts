@@ -4,7 +4,7 @@ export interface AuditEntryInput {
   businessId: string;
   actorUserId?: string;
   actorType?: "USER" | "AI" | "SYSTEM";
-  resource: "appointment" | "payment" | "staff" | "settings" | "permission" | "integration" | "service" | "client";
+  resource: "appointment" | "payment" | "staff" | "settings" | "permission" | "integration" | "service" | "client" | "reputation_request";
   resourceId: string;
   action: string;
   previousValue?: unknown;

@@ -136,11 +136,13 @@ describe("checkStaffAvailability", () => {
     expect(result.available).toBe(false);
     expect(result.reason).toMatch(/travel time/i);
 
-    // Confirm the conflict check actually widened the search window by the
-    // travel buffer rather than checking only the exact requested window.
+    // The requested appointment is at the salon, but the existing HOME visit
+    // still needs travel room. Confirm the HOME-specific query branch widens
+    // the search window without imposing that buffer on salon-to-salon slots.
     const callArgs = (prisma.appointment.findFirst as jest.Mock).mock.calls[0][0];
-    expect(callArgs.where.startsAt.lt.getTime()).toBe(wednesdayAt(16, 0).getTime()); // 15:30 + 30min buffer
-    expect(callArgs.where.endsAt.gt.getTime()).toBe(wednesdayAt(14, 0).getTime()); // 14:30 - 30min buffer
+    expect(callArgs.where.OR[1]).toMatchObject({ locationType: "HOME" });
+    expect(callArgs.where.OR[1].startsAt.lt.getTime()).toBe(wednesdayAt(16, 0).getTime()); // 15:30 + 30min buffer
+    expect(callArgs.where.OR[1].endsAt.gt.getTime()).toBe(wednesdayAt(14, 0).getTime()); // 14:30 - 30min buffer
   });
 
   it("returns available when every check passes", async () => {

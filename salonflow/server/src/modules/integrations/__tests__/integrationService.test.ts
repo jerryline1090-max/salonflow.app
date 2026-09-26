@@ -1,6 +1,16 @@
 jest.mock("../../../lib/prisma");
 jest.mock("../../../core/auditLog");
-jest.mock("../metaOAuthClient");
+jest.mock("../metaOAuthClient", () => {
+  const actual = jest.requireActual("../metaOAuthClient");
+  return {
+    ...actual,
+    buildAuthorizationUrl: jest.fn(),
+    exchangeCodeForToken: jest.fn(),
+    exchangeForLongLivedToken: jest.fn(),
+    listWhatsAppBusinessAccounts: jest.fn(),
+    listInstagramAccounts: jest.fn(),
+  };
+});
 
 import { prisma } from "../../../lib/prisma";
 import { eventBus } from "../../../core/eventBus";
@@ -22,6 +32,10 @@ const secrets = {
 };
 
 beforeEach(() => {
+  secrets.getSecret.mockReset();
+  secrets.setSecret.mockReset();
+  secrets.deleteSecret.mockReset();
+  secrets.deleteSecret.mockResolvedValue(undefined);
   jest.spyOn(eventBus, "emit").mockResolvedValue(undefined);
   (writeAuditLog as jest.Mock).mockResolvedValue(undefined);
   process.env.META_APP_ID = "app_id";

@@ -80,6 +80,41 @@ describe("ingestInboundMessage", () => {
     expect(prisma.conversationMessage.create).not.toHaveBeenCalled();
   });
 
+  it("persists an ordinary first delivery", async () => {
+    (prisma.conversation.upsert as jest.Mock).mockResolvedValue({ id: "conv_1", businessId: "biz_1", clientId: "client_1" });
+    (prisma.conversationMessage.findFirst as jest.Mock).mockResolvedValue(null);
+    (prisma.conversationMessage.create as jest.Mock).mockResolvedValue({ id: "msg_1" });
+
+    const result = await ingestInboundMessage(baseMsg);
+
+    expect(result).toMatchObject({ duplicate: false, message: { id: "msg_1" } });
+  });
+
+  it("treats the unique-constraint race as the same harmless duplicate", async () => {
+    const existing = { id: "msg_existing", conversationId: "conv_1", externalMessageId: baseMsg.externalMessageId };
+    const duplicateError = Object.assign(new Error("duplicate"), {
+      code: "P2002",
+      meta: { target: ["conversationId", "externalMessageId"] },
+    });
+    (prisma.conversation.upsert as jest.Mock).mockResolvedValue({ id: "conv_1", businessId: "biz_1", clientId: "client_1" });
+    (prisma.conversationMessage.findFirst as jest.Mock).mockResolvedValueOnce(null).mockResolvedValueOnce(existing);
+    (prisma.conversationMessage.create as jest.Mock).mockRejectedValue(duplicateError);
+
+    const result = await ingestInboundMessage(baseMsg);
+
+    expect(result).toEqual(expect.objectContaining({ message: existing, duplicate: true }));
+    expect(prisma.conversationMessage.findFirst).toHaveBeenCalledTimes(2);
+  });
+
+  it("propagates an unrelated database failure", async () => {
+    const databaseError = new Error("database unavailable");
+    (prisma.conversation.upsert as jest.Mock).mockResolvedValue({ id: "conv_1", businessId: "biz_1", clientId: "client_1" });
+    (prisma.conversationMessage.findFirst as jest.Mock).mockResolvedValue(null);
+    (prisma.conversationMessage.create as jest.Mock).mockRejectedValue(databaseError);
+
+    await expect(ingestInboundMessage(baseMsg)).rejects.toBe(databaseError);
+  });
+
   it("marks a voice/image message PENDING for processing, but a text message needs none", async () => {
     (prisma.conversation.upsert as jest.Mock).mockResolvedValue({ id: "conv_1", businessId: "biz_1", clientId: "client_1" });
     (prisma.conversationMessage.create as jest.Mock).mockResolvedValue({ id: "msg_3" });
