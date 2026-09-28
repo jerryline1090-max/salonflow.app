@@ -40,9 +40,9 @@ authRouter.post("/login", async (req, res) => {
 
 // Everything below requires a valid token.
 authRouter.get("/me", authenticate, async (req, res) => {
-  const user = await prisma.user.findUnique({ where: { id: req.actor!.userId } });
+  const user = await prisma.user.findUnique({ where: { id: req.actor!.userId }, include: { business: { select: { onboardingStatus: true, onboardingStep: true } } } });
   if (!user) return res.status(404).json({ error: "User not found" });
-  res.json({ id: user.id, name: user.name, email: user.email, role: user.role, businessId: user.businessId });
+  res.json({ id: user.id, name: user.name, email: user.email, role: user.role, businessId: user.businessId, onboarding: user.role === "OWNER" ? user.business : undefined });
 });
 
 // Section 28: viewing the team is a lighter bar than creating an account —

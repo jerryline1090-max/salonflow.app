@@ -144,6 +144,21 @@ enum NotificationAudience {
   CLIENT
 }
 
+enum OnboardingStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum OnboardingStep {
+  BUSINESS_DETAILS
+  SERVICES
+  BUSINESS_HOURS
+  TEAM
+  INTEGRATIONS
+  REVIEW
+}
+
 // ── AI Receptionist / multi-channel conversation enums ──────────────────
 
 enum ConversationChannel {
@@ -216,6 +231,10 @@ model Business {
   email                 String?
   address               String?
   timezone              String       @default("Africa/Lagos")
+  onboardingStatus      OnboardingStatus @default(COMPLETED)
+  onboardingStep        OnboardingStep?
+  onboardingCompletedAt DateTime?
+  onboardingServiceId   String?
   mode                  BusinessMode @default(SALON_ONLY)
 
   // Booking rules (business-wide; per-service overrides live on Service)

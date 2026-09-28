@@ -13,18 +13,19 @@ import { StaffPage } from "@/pages/StaffPage";
 import { PaymentsPage } from "@/pages/PaymentsPage";
 import { ReportsPage } from "@/pages/ReportsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { requiresOnboarding } from "@/onboardingRouting";
 
 function LoginRoute() {
   const { user, loading } = useAuth();
   if (loading) return null;
-  if (user) return <Navigate to="/" replace />;
+  if (user) return <Navigate to={requiresOnboarding(user) ? "/onboarding" : "/"} replace />;
   return <LoginPage />;
 }
 
 function RegisterRoute() {
   const { user, loading } = useAuth();
   if (loading) return null;
-  if (user) return <Navigate to="/" replace />;
+  if (user) return <Navigate to={requiresOnboarding(user) ? "/onboarding" : "/"} replace />;
   return <RegisterPage />;
 }
 
@@ -35,77 +36,77 @@ export function App() {
         <Routes>
           <Route path="/login" element={<LoginRoute />} />
           <Route path="/register" element={<RegisterRoute />} />
-          <Route path="/onboarding" element={<ProtectedRoute><OnboardingPage /></ProtectedRoute>} />
+          <Route path="/onboarding" element={<OnboardingRoute />} />
           <Route
             path="/"
             element={
-              <ProtectedRoute>
+              <OnboardingAppRoute>
                 <DashboardPage />
-              </ProtectedRoute>
+              </OnboardingAppRoute>
             }
           />
           <Route
             path="/appointments"
             element={
-              <ProtectedRoute>
+              <OnboardingAppRoute>
                 <AppointmentsPage />
-              </ProtectedRoute>
+              </OnboardingAppRoute>
             }
           />
           <Route
             path="/calendar"
             element={
-              <ProtectedRoute>
+              <OnboardingAppRoute>
                 <CalendarPage />
-              </ProtectedRoute>
+              </OnboardingAppRoute>
             }
           />
           <Route
             path="/clients"
             element={
-              <ProtectedRoute>
+              <OnboardingAppRoute>
                 <ClientsPage />
-              </ProtectedRoute>
+              </OnboardingAppRoute>
             }
           />
           <Route
             path="/services"
             element={
-              <ProtectedRoute>
+              <OnboardingAppRoute>
                 <ServicesPage />
-              </ProtectedRoute>
+              </OnboardingAppRoute>
             }
           />
           <Route
             path="/staff"
             element={
-              <ProtectedRoute>
+              <OnboardingAppRoute>
                 <StaffPage />
-              </ProtectedRoute>
+              </OnboardingAppRoute>
             }
           />
           <Route
             path="/payments"
             element={
-              <ProtectedRoute>
+              <OnboardingAppRoute>
                 <PaymentsPage />
-              </ProtectedRoute>
+              </OnboardingAppRoute>
             }
           />
           <Route
             path="/reports"
             element={
-              <ProtectedRoute>
+              <OnboardingAppRoute>
                 <ReportsPage />
-              </ProtectedRoute>
+              </OnboardingAppRoute>
             }
           />
           <Route
             path="/settings"
             element={
-              <ProtectedRoute>
+              <OnboardingAppRoute>
                 <SettingsPage />
-              </ProtectedRoute>
+              </OnboardingAppRoute>
             }
           />
           <Route path="*" element={<Navigate to="/" replace />} />
@@ -113,4 +114,19 @@ export function App() {
       </AuthProvider>
     </BrowserRouter>
   );
+}
+
+function OnboardingRoute() {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  if (!user) return <Navigate to="/login" replace />;
+  if (!requiresOnboarding(user)) return <Navigate to="/" replace />;
+  return <OnboardingPage />;
+}
+function OnboardingAppRoute({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  if (!user) return <Navigate to="/login" replace />;
+  if (requiresOnboarding(user)) return <Navigate to="/onboarding" replace />;
+  return <ProtectedRoute>{children}</ProtectedRoute>;
 }

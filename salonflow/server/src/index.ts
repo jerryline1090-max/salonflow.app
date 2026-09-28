@@ -22,6 +22,7 @@ import { integrationsCallbackRouter } from "./routes/integrationsCallback.routes
 import { integrationsRouter } from "./routes/integrations.routes";
 import { reputationRouter } from "./routes/reputation.routes";
 import { notificationsRouter } from "./routes/notifications.routes";
+import { onboardingRouter } from "./routes/onboarding.routes";
 import { queuePendingReputationRequests, sendPendingReputationRequests } from "./modules/reputation/reputationService";
 import { startScheduledJobs } from "./jobs/scheduler";
 
@@ -89,6 +90,7 @@ app.use("/api/assistant", assistantRouter);
 app.use("/api/integrations", integrationsRouter);
 app.use("/api/reputation", reputationRouter);
 app.use("/api/notifications", notificationsRouter);
+app.use("/api/onboarding", onboardingRouter);
 
 // ── Internal/system endpoints: no human actor, gated by a shared secret
 //    instead of a user JWT. Run this on a schedule (cron/worker), not from

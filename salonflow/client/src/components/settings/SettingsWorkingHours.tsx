@@ -16,22 +16,27 @@ function defaultHours(existing?: BusinessHoursEntry[]): BusinessHoursEntry[] {
   });
 }
 
-export function SettingsWorkingHours() {
+export function SettingsWorkingHours({ onSave }: { onSave?: (hours: BusinessHoursEntry[]) => Promise<unknown> }) {
   const { data: business } = useBusiness();
   const setWorkingHours = useSetWorkingHours();
   const [hours, setHours] = useState<BusinessHoursEntry[]>(defaultHours());
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (business) setHours(defaultHours(business.workingHours));
-  }, [business?.id]);
+  }, [business?.workingHours]);
 
   async function handleSave() {
     setError(null);
+    setSaving(true);
     try {
-      await setWorkingHours.mutateAsync(hours);
+      if (onSave) await onSave(hours);
+      else await setWorkingHours.mutateAsync(hours);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't save working hours.");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -94,8 +99,8 @@ export function SettingsWorkingHours() {
       )}
 
       <div className="mt-4 flex justify-end">
-        <Button size="sm" loading={setWorkingHours.isPending} onClick={handleSave}>
-          Save working hours
+        <Button size="sm" loading={saving || setWorkingHours.isPending} onClick={handleSave}>
+          {onSave ? "Save hours and continue" : "Save working hours"}
         </Button>
       </div>
     </Card>

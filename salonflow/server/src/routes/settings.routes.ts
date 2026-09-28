@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma";
 import { requirePermission } from "../middleware/authorize";
 import { writeAuditLog } from "../core/auditLog";
 import { assertValidTimezone } from "../core/timezone";
+import { saveBusinessHours } from "../modules/settings/businessHoursService";
 
 export const settingsRouter = Router();
 
@@ -70,25 +71,7 @@ settingsRouter.put("/working-hours", requirePermission("settings", "edit"), asyn
   try {
     const { hours } = req.body as { hours: { dayOfWeek: number; openTime: string; closeTime: string; isClosed: boolean }[] };
     const businessId = req.actor!.businessId!;
-
-    await prisma.$transaction(
-      hours.map((h) =>
-        prisma.businessHours.upsert({
-          where: { businessId_dayOfWeek: { businessId, dayOfWeek: h.dayOfWeek } },
-          create: { businessId, ...h },
-          update: h,
-        })
-      )
-    );
-
-    await writeAuditLog({
-      businessId,
-      actorUserId: req.actor!.userId,
-      resource: "settings",
-      resourceId: businessId,
-      action: "update_working_hours",
-      newValue: hours,
-    });
+    await saveBusinessHours(businessId, req.actor!.userId, hours);
 
     res.json({ success: true });
   } catch (err: any) {

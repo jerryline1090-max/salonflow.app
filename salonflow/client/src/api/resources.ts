@@ -33,6 +33,18 @@ export const authApi = {
   me: () => api.get<User>("/auth/me"),
 };
 
+export interface OnboardingState { onboardingStatus: "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED"; onboardingStep: "BUSINESS_DETAILS" | "SERVICES" | "BUSINESS_HOURS" | "TEAM" | "INTEGRATIONS" | "REVIEW" | null; onboardingCompletedAt?: string | null; }
+export interface OnboardingReview { business: { name: string; phone?: string | null; timezone: string }; workingHours: BusinessHoursEntry[]; activeServiceCount: number; teamAccountCount: number; integrations: Integration[]; }
+export const onboardingApi = {
+  state: () => api.get<OnboardingState>("/onboarding"),
+  advance: () => api.post<OnboardingState>("/onboarding/advance"),
+  skip: () => api.post<OnboardingState>("/onboarding/skip"),
+  review: () => api.get<OnboardingReview>("/onboarding/review"),
+  complete: () => api.post<OnboardingState>("/onboarding/complete"),
+  createService: (input: { name: string; category?: string; price: number; durationMinutes: number }) => api.post<Service>("/onboarding/service", input),
+  saveBusinessHours: (hours: BusinessHoursEntry[]) => api.post<OnboardingState>("/onboarding/business-hours", { hours }),
+};
+
 export const settingsApi = {
   get: () => api.get<Business>("/settings"),
   update: (updates: Partial<Business>) => api.put<Business>("/settings", updates),

@@ -31,15 +31,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   async function login(email: string, password: string) {
-    const { token, user: loggedInUser } = await authApi.login(email, password);
+    const { token } = await authApi.login(email, password);
     setToken(token);
-    setUser(loggedInUser);
+    setUser(await authApi.me());
   }
 
   async function register(input: { businessName: string; ownerName: string; email: string; password: string; phone: string }) {
-    const { token, user: registeredUser } = await authApi.register(input);
+    const { token } = await authApi.register(input);
     setToken(token);
-    setUser(registeredUser);
+    setUser(await authApi.me());
   }
 
   function logout() {

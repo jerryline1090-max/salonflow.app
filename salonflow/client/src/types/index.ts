@@ -10,6 +10,7 @@ export interface User {
   email: string;
   role: Role;
   businessId: string;
+  onboarding?: { onboardingStatus: "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED"; onboardingStep?: "BUSINESS_DETAILS" | "SERVICES" | "BUSINESS_HOURS" | "TEAM" | "INTEGRATIONS" | "REVIEW" | null };
 }
 
 export interface BusinessHoursEntry {

@@ -47,6 +47,8 @@ export async function registerBusiness(input: RegisterBusinessInput) {
     data: {
       name: input.businessName.trim(),
       phone: input.phone?.trim() || null,
+      onboardingStatus: "IN_PROGRESS",
+      onboardingStep: "BUSINESS_DETAILS",
       users: {
         create: {
           name: input.ownerName.trim(),
