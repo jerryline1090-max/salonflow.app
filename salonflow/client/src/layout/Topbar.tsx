@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { useBusiness, useMarkNotificationRead, useNotifications } from "@/hooks/useAppData";
 import { formatDateTime } from "@/utils/format";
 
-export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
+export function Topbar({ onMenuClick, navigationOpen }: { onMenuClick: () => void; navigationOpen: boolean }) {
   const { data: business } = useBusiness();
   const [notifOpen, setNotifOpen] = useState(false);
   const { data: notifications } = useNotifications({ limit: 15 });
@@ -35,7 +36,7 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
   return (
     <header className="flex h-16 shrink-0 items-center justify-between border-b border-line bg-paper px-4 sm:px-6">
       <div className="flex min-w-0 items-center gap-2">
-        <button onClick={onMenuClick} aria-label="Open navigation" className="rounded p-2 text-ink-soft hover:bg-paper-sunken md:hidden">
+        <button onClick={onMenuClick} aria-label="Open navigation" aria-expanded={navigationOpen} aria-controls="primary-navigation" className="min-h-11 min-w-11 rounded p-2 text-ink-soft hover:bg-paper-sunken md:hidden">
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>
         </button>
         {/* Section 5: the business's own name is the primary identity the
@@ -80,16 +81,15 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
                   {notifications.map((n) => (
                     <li
                       key={n.id}
-                      className={`px-4 py-3 cursor-pointer hover:bg-paper-sunken ${!n.isRead ? "bg-brass-50/60" : ""}`}
-                      onClick={() => !n.isRead && markRead.mutate(n.id)}
                     >
-                      <p className="text-sm font-medium text-ink">{n.title}</p>
-                      <p className="mt-0.5 text-sm text-ink-soft">{n.body}</p>
-                      <p className="mt-1 text-xs text-ink-muted">{formatDateTime(n.createdAt)}</p>
+                      <button className={`w-full px-4 py-3 text-left hover:bg-paper-sunken ${!n.isRead ? "bg-brass-50/60" : ""}`} onClick={() => !n.isRead && markRead.mutate(n.id)}>
+                        <p className="text-sm font-medium text-ink">{n.title}</p><p className="mt-0.5 text-sm text-ink-soft">{n.body}</p><p className="mt-1 text-xs text-ink-muted">{formatDateTime(n.createdAt)}</p>
+                      </button>
                     </li>
                   ))}
                 </ul>
               )}
+              <div className="border-t border-line p-2"><Link onClick={() => setNotifOpen(false)} to="/notifications" className="block rounded-md px-3 py-2 text-center text-sm font-medium text-brass-600 hover:bg-brass-50">View all notifications</Link></div>
             </div>
           </>
         )}

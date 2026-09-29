@@ -13,6 +13,7 @@ import { StaffPage } from "@/pages/StaffPage";
 import { PaymentsPage } from "@/pages/PaymentsPage";
 import { ReportsPage } from "@/pages/ReportsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { NotificationsPage } from "@/pages/NotificationsPage";
 import { requiresOnboarding } from "@/onboardingRouting";
 
 function LoginRoute() {
@@ -98,6 +99,14 @@ export function App() {
             element={
               <OnboardingAppRoute>
                 <ReportsPage />
+              </OnboardingAppRoute>
+            }
+          />
+          <Route
+            path="/notifications"
+            element={
+              <OnboardingAppRoute>
+                <NotificationsPage />
               </OnboardingAppRoute>
             }
           />

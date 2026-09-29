@@ -8,15 +8,15 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const VARIANT_CLASSES: Record<NonNullable<ButtonProps["variant"]>, string> = {
-  primary: "bg-brass-500 text-white hover:bg-brass-600 disabled:bg-ink-muted",
+  primary: "bg-brass-500 text-white shadow-sm hover:bg-brass-600 disabled:bg-ink-muted",
   secondary: "bg-paper-raised text-ink border border-line hover:bg-paper-sunken disabled:opacity-60",
   ghost: "text-ink-soft hover:bg-paper-sunken disabled:opacity-60",
   danger: "bg-danger text-white hover:opacity-90 disabled:opacity-60",
 };
 
 const SIZE_CLASSES: Record<NonNullable<ButtonProps["size"]>, string> = {
-  sm: "text-sm px-3 py-1.5",
-  md: "text-sm px-4 py-2.5",
+  sm: "min-h-9 text-sm px-3 py-1.5",
+  md: "min-h-11 text-sm px-4 py-2.5",
 };
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
@@ -25,7 +25,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       <button
         ref={ref}
         disabled={disabled || loading}
-        className={`inline-flex items-center justify-center gap-2 rounded font-medium transition-colors duration-150 disabled:cursor-not-allowed ${VARIANT_CLASSES[variant]} ${SIZE_CLASSES[size]} ${className}`}
+        className={`inline-flex items-center justify-center gap-2 rounded-md font-medium transition-colors duration-150 disabled:cursor-not-allowed ${VARIANT_CLASSES[variant]} ${SIZE_CLASSES[size]} ${className}`}
         {...rest}
       >
         {loading && <Spinner className="h-4 w-4" />}

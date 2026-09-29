@@ -30,17 +30,17 @@ const NAV_ITEMS: NavItem[] = [
   },
   { label: "Payments", to: "/payments", icon: <Icon d="M3 6h14v9H3zM3 9h14M6 12h2" />, implemented: true },
   { label: "Reports", to: "/reports", icon: <Icon d="M4 16V9M9 16V4M14 16v-6" />, implemented: true },
-  { label: "Settings", to: "/settings", icon: <Icon d="M10 13a3 3 0 100-6 3 3 0 000 6z M4 10a6 6 0 0012 0 6 6 0 00-12 0z" />, implemented: true },
+  { label: "Notifications", to: "/notifications", icon: <Icon d="M10 3a5 5 0 00-5 5v3l-1.5 3h13L15 11V8a5 5 0 00-5-5zM8 17a2 2 0 004 0" />, implemented: true },
 ];
 
 export function Sidebar({ mobileOpen, onNavigate }: { mobileOpen: boolean; onNavigate: () => void }) {
   const { logout, user } = useAuth();
 
   return (
-    <aside className={`fixed inset-y-0 left-0 z-50 flex h-screen w-64 shrink-0 flex-col border-r border-line bg-paper-sunken shadow-popover transition-transform duration-200 md:static md:z-auto md:w-60 md:translate-x-0 md:shadow-none ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}>
+    <aside id="primary-navigation" aria-label="Primary navigation" className={`fixed inset-y-0 left-0 z-50 flex h-screen w-64 shrink-0 flex-col border-r border-white/10 bg-sidebar text-white shadow-popover transition-transform duration-200 md:static md:z-auto md:w-60 md:translate-x-0 md:shadow-none ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}>
       <div className="flex items-center justify-between px-5 pb-5 pt-6">
-        <p className="font-display text-xl text-ink leading-none">SalonFlow</p>
-        <button onClick={onNavigate} aria-label="Close navigation" className="rounded p-1 text-ink-muted hover:bg-paper-raised md:hidden">×</button>
+        <p className="font-display text-xl text-white leading-none">SalonFlow</p>
+        <button onClick={onNavigate} aria-label="Close navigation" className="min-h-11 min-w-11 rounded p-1 text-slate-300 hover:bg-white/10 md:hidden">×</button>
       </div>
 
       <nav className="flex-1 space-y-0.5 px-3">
@@ -52,8 +52,8 @@ export function Sidebar({ mobileOpen, onNavigate }: { mobileOpen: boolean; onNav
               end={item.to === "/"}
               onClick={onNavigate}
               className={({ isActive }) =>
-                `flex items-center gap-2.5 rounded px-3 py-2 text-sm transition-colors ${
-                  isActive ? "bg-brass-500/15 text-brass-700 font-medium" : "text-ink-soft hover:bg-paper-raised"
+                `flex min-h-10 items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors ${
+                  isActive ? "bg-brass-500 text-white font-medium" : "text-slate-300 hover:bg-white/10 hover:text-white"
                 }`
               }
             >
@@ -73,16 +73,19 @@ export function Sidebar({ mobileOpen, onNavigate }: { mobileOpen: boolean; onNav
         )}
       </nav>
 
-      <div className="border-t border-line px-5 py-4">
-        <p className="text-sm font-medium text-ink truncate">{user?.name}</p>
-        <p className="text-xs text-ink-muted">
+      <div className="mx-5 border-t border-white/10" />
+      <NavLink to="/settings" onClick={onNavigate} className={({ isActive }) => `mx-3 mt-3 flex min-h-10 items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors ${isActive ? "bg-brass-500 text-white font-medium" : "text-slate-300 hover:bg-white/10 hover:text-white"}`}><Icon d="M10 13a3 3 0 100-6 3 3 0 000 6z M4 10a6 6 0 0012 0 6 6 0 00-12 0z" />Settings</NavLink>
+
+      <div className="mt-3 border-t border-white/10 px-5 py-4">
+        <p className="text-sm font-medium text-white truncate">{user?.name}</p>
+        <p className="text-xs text-slate-400">
           {user?.role.charAt(0)}
           {user?.role.slice(1).toLowerCase()}
         </p>
-        <button onClick={logout} className="mt-2 text-xs text-ink-muted hover:text-ink underline underline-offset-2">
+        <button onClick={logout} className="mt-2 text-xs text-slate-300 hover:text-white underline underline-offset-2">
           Sign out
         </button>
-        <p className="mt-4 text-[11px] text-ink-muted/70">Powered by SalonFlow</p>
+        <p className="mt-4 text-[11px] text-slate-500">Powered by SalonFlow</p>
       </div>
     </aside>
   );

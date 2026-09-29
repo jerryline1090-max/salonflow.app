@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 interface ModalProps {
@@ -10,16 +10,30 @@ interface ModalProps {
 }
 
 export function Modal({ open, onClose, title, children, size = "md" }: ModalProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const titleId = useId();
   useEffect(() => {
     if (!open) return;
+    returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusable = () => Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? []);
     function handleKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
+      if (e.key === "Tab") {
+        const items = focusable();
+        if (!items.length) return;
+        const first = items[0]; const last = items[items.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
     }
     document.addEventListener("keydown", handleKey);
     document.body.style.overflow = "hidden";
+    requestAnimationFrame(() => focusable()[0]?.focus());
     return () => {
       document.removeEventListener("keydown", handleKey);
       document.body.style.overflow = "";
+      returnFocusRef.current?.focus();
     };
   }, [open, onClose]);
 
@@ -31,11 +45,12 @@ export function Modal({ open, onClose, title, children, size = "md" }: ModalProp
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={title}
+        aria-labelledby={titleId}
+        ref={dialogRef}
         className={`relative w-full ${size === "lg" ? "max-w-2xl" : "max-w-md"} rounded-lg bg-paper-raised shadow-popover`}
       >
         <div className="flex items-center justify-between border-b border-line px-6 py-4">
-          <h2 className="font-display text-lg text-ink">{title}</h2>
+          <h2 id={titleId} className="font-display text-lg text-ink">{title}</h2>
           <button
             onClick={onClose}
             aria-label="Close"
