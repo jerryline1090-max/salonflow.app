@@ -33,6 +33,24 @@ describe("GET /api/clients", () => {
 
     expect((prisma.client.findMany as jest.Mock).mock.calls[0][0].where).toEqual({ businessId: "biz_1" });
   });
+
+  it("uses a bounded deterministic page and returns pagination metadata", async () => {
+    (prisma.client.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.client.count as jest.Mock).mockResolvedValue(101);
+    const res = await request(buildApp()).get("/api/clients?page=2&limit=999").set("Authorization", `Bearer ${ownerToken}`);
+    expect((prisma.client.findMany as jest.Mock).mock.calls[0][0]).toEqual(expect.objectContaining({ skip: 100, take: 100, orderBy: { createdAt: "desc" } }));
+    expect(res.body.pagination).toEqual({ page: 2, limit: 100, total: 101, totalPages: 2 });
+  });
+
+  it("searches only within the authenticated business using a bounded query", async () => {
+    (prisma.client.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.client.count as jest.Mock).mockResolvedValue(0);
+    await request(buildApp()).get("/api/clients?q=Ada%20Braider&limit=20").set("Authorization", `Bearer ${ownerToken}`);
+    const where = (prisma.client.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(where.businessId).toBe("biz_1");
+    expect(where.OR).toHaveLength(3);
+    expect((prisma.client.findMany as jest.Mock).mock.calls[0][0].take).toBe(20);
+  });
 });
 
 describe("PUT /api/clients/:id", () => {

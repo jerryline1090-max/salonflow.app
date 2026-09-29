@@ -9,6 +9,7 @@ import { PageContainer } from "@/components/PageContainer";
 import { PageHeader } from "@/components/PageHeader";
 import { Skeleton } from "@/components/Skeleton";
 import { Alert } from "@/components/Alert";
+import { PaginationControls } from "@/components/PaginationControls";
 
 const STATUS_STYLES: Record<string, string> = {
   ACTIVE: "text-success",
@@ -17,7 +18,9 @@ const STATUS_STYLES: Record<string, string> = {
 };
 
 export function StaffPage() {
-  const { data: staff, isLoading, isError } = useStaff();
+  const [page, setPage] = useState(1);
+  const { data: staffPage, isLoading, isError } = useStaff(page);
+  const staff = staffPage?.items;
   const [createOpen, setCreateOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
 
@@ -61,6 +64,7 @@ export function StaffPage() {
             </tbody>
           </table></div></>)}
       </Card>
+      {staffPage && <PaginationControls page={staffPage.pagination.page} totalPages={staffPage.pagination.totalPages} onPageChange={setPage} />}
 
       <CreateStaffModal open={createOpen} onClose={() => setCreateOpen(false)} />
       <StaffDetailModal staffId={detailId} onClose={() => setDetailId(null)} />

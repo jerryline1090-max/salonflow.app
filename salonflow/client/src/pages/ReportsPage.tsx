@@ -13,6 +13,7 @@ import { Button } from "@/components/Button";
 import { formatCurrency } from "@/utils/format";
 import { PageContainer } from "@/components/PageContainer";
 import { PageHeader } from "@/components/PageHeader";
+import { Alert } from "@/components/Alert";
 
 type RangeOption = "7d" | "30d" | "90d";
 
@@ -29,6 +30,7 @@ export function ReportsPage() {
   const popularServices = usePopularServicesReport({ days });
   const staffPerformance = useStaffPerformanceReport({ days });
   const retention = useClientRetentionReport();
+  const hasError = revenue.isError || outcomes.isError || popularServices.isError || staffPerformance.isError || retention.isError;
 
   return (
     <PageContainer>
@@ -46,6 +48,7 @@ export function ReportsPage() {
         <StatCard label="Cancelled" value={outcomes.data?.cancelled ?? "—"} />
         <StatCard label="No-shows" value={outcomes.data?.noShow ?? "—"} />
       </div>
+      {hasError && <Alert tone="error" className="mb-4">Some report data could not be loaded. Try again shortly.</Alert>}
 
       <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-2">
         <Card className="p-5">

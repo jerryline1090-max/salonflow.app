@@ -10,9 +10,12 @@ import { PageContainer } from "@/components/PageContainer";
 import { PageHeader } from "@/components/PageHeader";
 import { Skeleton } from "@/components/Skeleton";
 import { Alert } from "@/components/Alert";
+import { PaginationControls } from "@/components/PaginationControls";
 
 export function ClientsPage() {
-  const { data: clients, isLoading, isError } = useClients();
+  const [page, setPage] = useState(1);
+  const { data: clientPage, isLoading, isError } = useClients(page);
+  const clients = clientPage?.items;
   const [search, setSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -65,6 +68,7 @@ export function ClientsPage() {
             </tbody>
           </table></div></>)}
       </Card>
+      {clientPage && <PaginationControls page={clientPage.pagination.page} totalPages={clientPage.pagination.totalPages} onPageChange={setPage} />}
 
       <CreateClientModal open={createOpen} onClose={() => setCreateOpen(false)} />
       <ClientDetailModal clientId={detailId} onClose={() => setDetailId(null)} />

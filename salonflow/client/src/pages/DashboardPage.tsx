@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
 import { useAppointments } from "@/hooks/useAppointments";
-import { useClients } from "@/hooks/useAppData";
+import { useClientCount } from "@/hooks/useAppData";
 import { useRevenueReport } from "@/hooks/useReports";
 import { StatCard } from "@/components/StatCard";
 import { NeedsAttentionPanel } from "@/components/NeedsAttentionPanel";
@@ -24,10 +24,10 @@ export function DashboardPage() {
   const today = useAppointments({ from: startOfDayIso(), to: endOfDayIso() });
   const needsAttention = useAppointments({ needsAttention: true });
   const revenue = useRevenueReport({ period: "today" });
-  const clients = useClients();
-  const todaysAppointments = today.data ?? [];
+  const clients = useClientCount();
+  const todaysAppointments = today.data?.items ?? [];
   const upcomingToday = todaysAppointments.filter((appointment) => appointment.status === "PENDING" || appointment.status === "CONFIRMED");
-  const attentionCount = needsAttention.data?.length ?? 0;
+  const attentionCount = needsAttention.data?.pagination.total ?? 0;
   const trend = [["Pending", "PENDING"], ["Confirmed", "CONFIRMED"], ["Completed", "COMPLETED"], ["Cancelled", "CANCELLED"], ["No-show", "NO_SHOW"]].map(([label, status]) => ({ label, value: todaysAppointments.filter((appointment) => appointment.status === status).length }));
 
   return <PageContainer>
@@ -35,13 +35,13 @@ export function DashboardPage() {
     <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
       <StatCard label="Today's appointments" value={today.isLoading ? "—" : todaysAppointments.length} />
       <StatCard label="Today's revenue" value={revenue.data ? formatCurrency(revenue.data.totalRevenue) : "—"} />
-      <StatCard label="Total clients" value={clients.data?.length ?? "—"} />
+      <StatCard label="Total clients" value={clients.data?.count ?? "—"} />
       <StatCard label="Upcoming" value={today.isLoading ? "—" : upcomingToday.length} />
     </div>
     <div className="mt-6 flex flex-col">
     {attentionCount > 0 && <section className="order-1" aria-labelledby="attention-heading">
       <div className="mb-3 flex items-center justify-between"><div><h2 id="attention-heading" className="font-display text-lg text-ink">Needs attention</h2><p className="mt-0.5 text-sm text-ink-muted">Resolve past appointments that still need an outcome.</p></div><Link to="/appointments" className="text-sm font-medium text-brass-600 hover:underline">View appointments</Link></div>
-      <NeedsAttentionPanel appointments={needsAttention.data ?? []} isLoading={needsAttention.isLoading} onReschedule={setRescheduleTarget} />
+      <NeedsAttentionPanel appointments={needsAttention.data?.items ?? []} isLoading={needsAttention.isLoading} onReschedule={setRescheduleTarget} />
     </section>}
     <section className="order-2 mt-6 md:order-3" aria-labelledby="schedule-heading">
       <div className="mb-3"><h2 id="schedule-heading" className="font-display text-lg text-ink">Today’s schedule</h2><p className="mt-0.5 text-sm text-ink-muted">Your pending and confirmed appointments for today.</p></div>

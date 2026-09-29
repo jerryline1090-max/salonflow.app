@@ -5,16 +5,18 @@ import { assertBelongsToBusiness, ForbiddenError } from "../core/tenantGuard";
 import { recordPayment, getOutstandingBalance } from "../modules/payments/paymentService";
 import { asyncHandler } from "../middleware/asyncHandler";
 import { rethrowIfDatabaseUnavailable } from "../middleware/errorHandler";
+import { pageResult, parsePagination } from "../core/pagination";
 
 export const paymentsRouter = Router();
 
 paymentsRouter.get("/", requirePermission("payments", "view"), asyncHandler(async (req, res) => {
-  const payments = await prisma.payment.findMany({
-    where: { businessId: req.actor!.businessId },
-    orderBy: { createdAt: "desc" },
-    include: { client: true, appointment: { include: { service: true } } },
-  });
-  res.json(payments);
+  const { page, limit, skip } = parsePagination(req.query);
+  const where = { businessId: req.actor!.businessId };
+  const [items, total] = await Promise.all([
+    prisma.payment.findMany({ where, orderBy: [{ createdAt: "desc" }, { id: "asc" }], skip, take: limit, include: { client: { select: { id: true, name: true } }, appointment: { select: { service: { select: { id: true, name: true } } } } } }),
+    prisma.payment.count({ where }),
+  ]);
+  res.json(pageResult(items, total, page, limit));
 }));
 
 paymentsRouter.post("/", requirePermission("payments", "create"), asyncHandler(async (req, res) => {

@@ -2,10 +2,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { appointmentsApi } from "@/api/resources";
 import type { AppointmentStatus, LocationType } from "@/types";
 
-export function useAppointments(filters?: { from?: string; to?: string; status?: AppointmentStatus; needsAttention?: boolean; clientId?: string }) {
+export function useAppointments(filters?: { from?: string; to?: string; status?: AppointmentStatus; needsAttention?: boolean; clientId?: string; page?: number; limit?: number }) {
   return useQuery({
     queryKey: ["appointments", filters],
     queryFn: () => appointmentsApi.list(filters),
+    placeholderData: (previousData) => previousData,
+    staleTime: 10_000,
   });
 }
 

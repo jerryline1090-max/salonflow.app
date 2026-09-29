@@ -352,6 +352,8 @@ model Service {
 
   staffLinks          StaffService[]
   appointments        Appointment[]
+
+  @@index([businessId])
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -380,6 +382,8 @@ model Staff {
   timeOff           StaffTimeOff[]
   appointments      Appointment[]
   appointmentEvents AppointmentEvent[] @relation("EventActorStaff")
+
+  @@index([businessId])
 }
 
 // Which services a staff member is qualified/allowed to perform.
@@ -436,6 +440,8 @@ model Client {
   channelIdentities   ClientChannelIdentity[]
   reputationRequests  ReputationRequest[]
 
+  @@index([businessId, createdAt])
+
   // NOTE: There is intentionally no `totalVisits` column on this table.
   // Visit counts are DERIVED at read time from Appointment.status = COMPLETED
   // (see src/modules/clients/clientStats.ts) so they can never drift from
@@ -490,6 +496,8 @@ model Appointment {
   reputationRequest ReputationRequest?
 
   @@index([businessId, startsAt])
+  @@index([businessId, status, startsAt])
+  @@index([businessId, needsAttention])
   @@index([staffId, startsAt])
   @@index([status])
 }
@@ -540,6 +548,8 @@ model Payment {
   updatedAt      DateTime      @updatedAt
 
   @@index([businessId, status])
+  @@index([businessId, createdAt])
+  @@index([businessId, status, paidAt])
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -564,6 +574,9 @@ model Notification {
   actionRequired Boolean               @default(false)
 
   createdAt      DateTime              @default(now())
+
+  @@index([businessId, isRead, createdAt])
+  @@index([businessId, audience, audienceUserId, createdAt])
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -8,6 +8,8 @@ import { PageContainer } from "@/components/PageContainer";
 import { PageHeader } from "@/components/PageHeader";
 import { Skeleton } from "@/components/Skeleton";
 import { Alert } from "@/components/Alert";
+import { PaginationControls } from "@/components/PaginationControls";
+import { useState } from "react";
 
 const METHOD_LABELS: Record<string, string> = {
   CASH: "Cash",
@@ -25,7 +27,9 @@ const STATUS_STYLES: Record<string, string> = {
 };
 
 export function PaymentsPage() {
-  const { data: payments, isLoading, isError } = usePayments();
+  const [page, setPage] = useState(1);
+  const { data: paymentPage, isLoading, isError } = usePayments(page);
+  const payments = paymentPage?.items;
 
   const { data: revenue } = useRevenueReport({ period: "current-month" });
 
@@ -80,6 +84,7 @@ export function PaymentsPage() {
             </tbody>
           </table></div></>)}
       </Card>
+      {paymentPage && <PaginationControls page={paymentPage.pagination.page} totalPages={paymentPage.pagination.totalPages} onPageChange={setPage} />}
     </PageContainer>
   );
 }

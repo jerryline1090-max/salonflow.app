@@ -46,7 +46,7 @@ export function AppointmentDetailModal({
 }) {
   const { user } = useAuth();
   const { data: appointment, isLoading } = useAppointment(appointmentId);
-  const { data: staff } = useStaff();
+  const { data: staff } = useStaff(1, 100);
   const { data: outstanding } = useOutstandingBalance(appointmentId);
   const changeStatus = useChangeAppointmentStatus();
   const reassign = useReassignAppointment();
@@ -230,7 +230,7 @@ export function AppointmentDetailModal({
                 <label className="block text-xs font-medium text-ink-soft mb-1">Reassign to</label>
                 <Select value={reassignTo} onChange={(e) => setReassignTo(e.target.value)}>
                   <option value="">Select a staff member…</option>
-                  {staff
+                  {staff?.items
                     ?.filter((s) => s.id !== appointment.staffId && s.status === "ACTIVE")
                     .map((s) => (
                       <option key={s.id} value={s.id}>

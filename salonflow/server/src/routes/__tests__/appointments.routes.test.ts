@@ -89,6 +89,14 @@ describe("GET /api/appointments", () => {
     const whereArg = (prisma.appointment.findMany as jest.Mock).mock.calls[0][0].where;
     expect(whereArg.staffId).toBe("staff_1");
   });
+
+  it("caps list size and returns deterministic pagination metadata", async () => {
+    (prisma.appointment.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.appointment.count as jest.Mock).mockResolvedValue(3);
+    const res = await request(buildApp()).get("/api/appointments?limit=500").set("Authorization", `Bearer ${ownerToken}`);
+    expect((prisma.appointment.findMany as jest.Mock).mock.calls[0][0]).toEqual(expect.objectContaining({ take: 100, skip: 0, orderBy: [{ startsAt: "asc" }, { id: "asc" }] }));
+    expect(res.body.pagination).toEqual({ page: 1, limit: 100, total: 3, totalPages: 1 });
+  });
 });
 
 describe("GET /api/appointments/:id", () => {

@@ -37,7 +37,7 @@ describe("GET /api/payments", () => {
 
     const callArgs = (prisma.payment.findMany as jest.Mock).mock.calls[0][0];
     expect(callArgs.where).toEqual({ businessId: "biz_1" });
-    expect(callArgs.include).toEqual(expect.objectContaining({ client: true }));
+    expect(callArgs.include.client).toEqual({ select: { id: true, name: true } });
   });
 });
 

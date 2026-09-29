@@ -30,6 +30,7 @@ import { prisma } from "./lib/prisma";
 import { asyncHandler, protectRouterAsyncHandlers } from "./middleware/asyncHandler";
 import { errorHandler } from "./middleware/errorHandler";
 import { healthRouter } from "./routes/health.routes";
+import { requestTiming } from "./middleware/requestTiming";
 
 protectRouterAsyncHandlers(
   authRouter,
@@ -58,6 +59,7 @@ protectRouterAsyncHandlers(
 registerNotificationListeners();
 
 const app = express();
+app.use(requestTiming);
 // These endpoints are intentionally outside /api and unauthenticated so a
 // platform can distinguish a live Node process from a database-ready API.
 app.use(healthRouter);

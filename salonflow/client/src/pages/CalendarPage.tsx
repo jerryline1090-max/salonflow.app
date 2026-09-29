@@ -34,11 +34,11 @@ export function CalendarPage() {
   const [createPrefill, setCreatePrefill] = useState<{ staffId?: string; startsAt?: string } | null>(null);
 
   const { data: business } = useBusiness();
-  const { data: staff } = useStaff();
-  const { data: appointments, isError } = useAppointments({ from: startOfDayIso(selectedDate), to: endOfDayIso(selectedDate) });
+  const { data: staff } = useStaff(1, 100);
+  const { data: appointments, isError, isLoading } = useAppointments({ from: startOfDayIso(selectedDate), to: endOfDayIso(selectedDate), limit: 100 });
 
   const dayOfWeek = selectedDate.getDay();
-  const activeStaff = useMemo(() => (staff ?? []).filter((s) => s.status === "ACTIVE"), [staff]);
+  const activeStaff = useMemo(() => (staff?.items ?? []).filter((s) => s.status === "ACTIVE"), [staff]);
 
   const businessHoursToday = business?.workingHours?.find((w) => w.dayOfWeek === dayOfWeek);
   const businessClosedToday = businessHoursToday?.isClosed ?? false;
@@ -51,7 +51,7 @@ export function CalendarPage() {
   const showNowLine = isToday && nowMinutes >= gridStart && nowMinutes <= gridEnd;
 
   function appointmentsForStaff(staffId: string): Appointment[] {
-    return (appointments ?? []).filter((a) => a.staffId === staffId);
+    return (appointments?.items ?? []).filter((a) => a.staffId === staffId);
   }
 
   function handleSlotClick(staffId: string, slotStartMinutes: number) {
@@ -78,7 +78,7 @@ export function CalendarPage() {
       </div>
 
       <Card className="overflow-hidden">
-        {isError ? <Alert tone="error" className="m-5">The calendar could not be loaded.</Alert> : businessClosedToday ? (
+        {isLoading ? <div className="space-y-3 p-5"><div className="h-10 animate-pulse rounded bg-paper-sunken" /><div className="h-72 animate-pulse rounded bg-paper-sunken" /></div> : isError ? <Alert tone="error" className="m-5">The calendar could not be loaded.</Alert> : businessClosedToday ? (
           <EmptyState title="Closed today" description="This salon isn't open on this day — check Settings to adjust working hours." />
         ) : activeStaff.length === 0 ? (
           <EmptyState title="No active staff to schedule" description="Add a staff member to start filling in the calendar." />
@@ -174,7 +174,7 @@ export function CalendarPage() {
         appointmentId={detailId}
         onClose={() => setDetailId(null)}
         onReschedule={() => {
-          const appt = appointments?.find((a) => a.id === detailId);
+          const appt = appointments?.items.find((a) => a.id === detailId);
           if (appt) {
             setRescheduleTarget(appt);
             setDetailId(null);

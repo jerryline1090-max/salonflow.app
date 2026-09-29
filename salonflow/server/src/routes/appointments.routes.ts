@@ -12,6 +12,7 @@ import {
 import { resolveOwnStaffId } from "../modules/staff/resolveOwnStaffId";
 import { asyncHandler } from "../middleware/asyncHandler";
 import { rethrowIfDatabaseUnavailable } from "../middleware/errorHandler";
+import { pageResult, parsePagination } from "../core/pagination";
 
 export const appointmentsRouter = Router();
 
@@ -37,12 +38,12 @@ appointmentsRouter.get("/", requirePermission("appointments", "view"), asyncHand
     if (to) where.startsAt.lte = new Date(to);
   }
 
-  const appointments = await prisma.appointment.findMany({
-    where,
-    orderBy: { startsAt: "asc" },
-    include: { client: true, service: true, staff: true },
-  });
-  res.json(appointments);
+  const { page, limit, skip } = parsePagination(req.query);
+  const [items, total] = await Promise.all([
+    prisma.appointment.findMany({ where, orderBy: [{ startsAt: "asc" }, { id: "asc" }], skip, take: limit, include: { client: { select: { id: true, name: true, phone: true, email: true } }, service: { select: { id: true, name: true, price: true, durationMinutes: true } }, staff: { select: { id: true, name: true } } } }),
+    prisma.appointment.count({ where }),
+  ]);
+  res.json(pageResult(items, total, page, limit));
 }));
 
 appointmentsRouter.get("/:id", requirePermission("appointments", "view"), asyncHandler(async (req, res) => {

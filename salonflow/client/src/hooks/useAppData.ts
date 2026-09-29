@@ -1,8 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { clientsApi, notificationsApi, servicesApi, settingsApi, staffApi } from "@/api/resources";
 
-export function useClients() {
-  return useQuery({ queryKey: ["clients"], queryFn: clientsApi.list });
+export function useClients(page = 1, limit = 25, search?: string) {
+  return useQuery({ queryKey: ["clients", page, limit, search ?? ""], queryFn: () => clientsApi.list(page, limit, search), placeholderData: (previousData) => previousData, staleTime: 60_000 });
+}
+
+export function useClientCount() {
+  return useQuery({ queryKey: ["clients", "count"], queryFn: clientsApi.count, staleTime: 30_000 });
 }
 
 export function useClient(id: string | null) {
@@ -30,15 +34,15 @@ export function useUpdateClient() {
 }
 
 export function useServices() {
-  return useQuery({ queryKey: ["services"], queryFn: servicesApi.list });
+  return useQuery({ queryKey: ["services"], queryFn: servicesApi.list, staleTime: 5 * 60_000, refetchOnWindowFocus: false });
 }
 
-export function useStaff() {
-  return useQuery({ queryKey: ["staff"], queryFn: staffApi.list });
+export function useStaff(page = 1, limit = 25) {
+  return useQuery({ queryKey: ["staff", page, limit], queryFn: () => staffApi.list(page, limit), placeholderData: (previousData) => previousData, staleTime: 60_000 });
 }
 
 export function useBusiness() {
-  return useQuery({ queryKey: ["settings"], queryFn: settingsApi.get });
+  return useQuery({ queryKey: ["settings"], queryFn: settingsApi.get, staleTime: 5 * 60_000, refetchOnWindowFocus: false });
 }
 
 export function useNotifications(filters?: { unreadOnly?: boolean; limit?: number }) {
@@ -46,6 +50,7 @@ export function useNotifications(filters?: { unreadOnly?: boolean; limit?: numbe
     queryKey: ["notifications", filters],
     queryFn: () => notificationsApi.list(filters),
     refetchInterval: 60_000,
+    staleTime: 15_000,
   });
 }
 

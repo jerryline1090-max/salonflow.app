@@ -6,12 +6,26 @@ import { getClientStats } from "../modules/clients/clientStats";
 import { updateClient } from "../modules/clients/clientService";
 import { asyncHandler } from "../middleware/asyncHandler";
 import { rethrowIfDatabaseUnavailable } from "../middleware/errorHandler";
+import { pageResult, parsePagination } from "../core/pagination";
 
 export const clientsRouter = Router();
 
 clientsRouter.get("/", requirePermission("clients", "view"), asyncHandler(async (req, res) => {
-  const clients = await prisma.client.findMany({ where: { businessId: req.actor!.businessId } });
-  res.json(clients);
+  const { page, limit, skip } = parsePagination(req.query);
+  const where = { businessId: req.actor!.businessId };
+  const search = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  const searchWhere = search
+    ? { ...where, OR: ["name", "phone", "email"].map((field) => ({ [field]: { contains: search, mode: "insensitive" as const } })) }
+    : where;
+  const [items, total] = await Promise.all([
+    prisma.client.findMany({ where: searchWhere, orderBy: search ? [{ name: "asc" }, { id: "asc" }] : { createdAt: "desc" }, skip, take: limit, select: { id: true, name: true, phone: true, email: true, address: true, notes: true } }),
+    prisma.client.count({ where: searchWhere }),
+  ]);
+  res.json(pageResult(items, total, page, limit));
+}));
+
+clientsRouter.get("/count", requirePermission("clients", "view"), asyncHandler(async (req, res) => {
+  res.json({ count: await prisma.client.count({ where: { businessId: req.actor!.businessId } }) });
 }));
 
 clientsRouter.get("/:id", requirePermission("clients", "view"), asyncHandler(async (req, res) => {

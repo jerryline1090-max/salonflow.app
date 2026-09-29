@@ -24,6 +24,7 @@ import type {
   StaffStatusChangeResult,
   TeamMember,
   User,
+  PaginatedResult,
 } from "@/types";
 
 export const authApi = {
@@ -52,8 +53,8 @@ export const settingsApi = {
 };
 
 export const appointmentsApi = {
-  list: (filters?: { from?: string; to?: string; status?: AppointmentStatus; needsAttention?: boolean; clientId?: string }) =>
-    api.get<Appointment[]>("/appointments", filters),
+  list: (filters?: { from?: string; to?: string; status?: AppointmentStatus; needsAttention?: boolean; clientId?: string; page?: number; limit?: number }) =>
+    api.get<PaginatedResult<Appointment>>("/appointments", filters),
   get: (id: string) => api.get<Appointment>(`/appointments/${id}`),
   create: (input: {
     clientId: string;
@@ -72,7 +73,8 @@ export const appointmentsApi = {
 };
 
 export const clientsApi = {
-  list: () => api.get<Client[]>("/clients"),
+  list: (page = 1, limit = 25, q?: string) => api.get<PaginatedResult<Client>>("/clients", { page, limit, ...(q ? { q } : {}) }),
+  count: () => api.get<{ count: number }>("/clients/count"),
   get: (id: string) => api.get<Client>(`/clients/${id}`),
   stats: (id: string) => api.get<ClientStats>(`/clients/${id}/stats`),
   create: (input: { name: string; phone?: string; email?: string; address?: string; notes?: string }) =>
@@ -102,7 +104,7 @@ export const servicesApi = {
 };
 
 export const staffApi = {
-  list: () => api.get<StaffMember[]>("/staff"),
+  list: (page = 1, limit = 25) => api.get<PaginatedResult<StaffMember>>("/staff", { page, limit }),
   get: (id: string) => api.get<StaffMember>(`/staff/${id}`),
   create: (input: {
     name: string;
@@ -135,7 +137,7 @@ export const reportsApi = {
 };
 
 export const paymentsApi = {
-  list: () => api.get<Payment[]>("/payments"),
+  list: (page = 1, limit = 25) => api.get<PaginatedResult<Payment>>("/payments", { page, limit }),
   record: (input: { appointmentId?: string; clientId: string; amount: number; method: PaymentMethod }) =>
     api.post<Payment>("/payments", input),
   outstanding: (appointmentId: string) => api.get<OutstandingBalance>(`/payments/appointments/${appointmentId}/outstanding`),

@@ -134,11 +134,11 @@ export function ClientDetailModal({ clientId, onClose }: { clientId: string | nu
 
           <div className="border-t border-line pt-4">
             <p className="mb-3 text-sm font-medium text-ink">Appointment history</p>
-            {!appointments || appointments.length === 0 ? (
+            {!appointments?.items.length ? (
               <p className="text-sm text-ink-muted">No appointments on file yet.</p>
             ) : (
               <ul className="space-y-2 max-h-64 overflow-y-auto scrollbar-thin">
-                {appointments.map((a) => (
+                {appointments.items.map((a) => (
                   <li key={a.id} className="flex items-center justify-between text-sm">
                     <div>
                       <p className="text-ink">{a.service?.name}</p>

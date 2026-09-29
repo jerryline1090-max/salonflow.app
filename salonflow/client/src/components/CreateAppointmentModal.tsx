@@ -17,9 +17,12 @@ interface CreateAppointmentModalProps {
 }
 
 export function CreateAppointmentModal({ open, onClose, prefill }: CreateAppointmentModalProps) {
-  const { data: clients } = useClients();
+  const [clientSearch, setClientSearch] = useState("");
+  const [debouncedClientSearch, setDebouncedClientSearch] = useState("");
+  const [selectedClientName, setSelectedClientName] = useState("");
+  const { data: clients } = useClients(1, 20, debouncedClientSearch);
   const { data: services } = useServices();
-  const { data: staff } = useStaff();
+  const { data: staff } = useStaff(1, 100);
   const createClient = useCreateClient();
   const createAppointment = useCreateAppointment();
 
@@ -36,6 +39,11 @@ export function CreateAppointmentModal({ open, onClose, prefill }: CreateAppoint
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedClientSearch(clientSearch.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [clientSearch]);
+
+  useEffect(() => {
     if (open && prefill) {
       if (prefill.staffId) setStaffId(prefill.staffId);
       if (prefill.startsAt) setStartsAt(prefill.startsAt);
@@ -44,15 +52,19 @@ export function CreateAppointmentModal({ open, onClose, prefill }: CreateAppoint
   }, [open, prefill?.staffId, prefill?.startsAt]);
 
   const selectedService = useMemo(() => services?.find((s) => s.id === serviceId), [services, serviceId]);
+  const clientItems = clients?.items ?? [];
+  const staffItems = staff?.items ?? [];
 
   const qualifiedStaff = useMemo(() => {
-    if (!staff || !serviceId) return staff ?? [];
-    return staff.filter((s) => s.services?.some((link) => link.serviceId === serviceId));
-  }, [staff, serviceId]);
+    if (!serviceId) return staffItems;
+    return staffItems.filter((s) => s.services?.some((link) => link.serviceId === serviceId));
+  }, [staffItems, serviceId]);
 
   function resetForm() {
     setIsNewClient(false);
     setClientId("");
+    setClientSearch("");
+    setSelectedClientName("");
     setNewClientName("");
     setNewClientPhone("");
     setServiceId("");
@@ -126,15 +138,10 @@ export function CreateAppointmentModal({ open, onClose, prefill }: CreateAppoint
               <Input placeholder="Phone (optional)" value={newClientPhone} onChange={(e) => setNewClientPhone(e.target.value)} />
             </div>
           ) : (
-            <Select value={clientId} onChange={(e) => setClientId(e.target.value)} required>
-              <option value="">Select a client…</option>
-              {clients?.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                  {c.phone ? ` — ${c.phone}` : ""}
-                </option>
-              ))}
-            </Select>
+            <div className="space-y-2">
+              <Input value={clientSearch} onChange={(e) => { setClientSearch(e.target.value); setClientId(""); setSelectedClientName(""); }} placeholder="Search name, phone, or email…" aria-label="Search existing clients" />
+              {clientId ? <p className="text-sm text-ink-soft">Selected: <span className="font-medium text-ink">{selectedClientName}</span></p> : <div className="max-h-36 overflow-y-auto rounded border border-line bg-paper-raised">{clientItems.length === 0 ? <p className="px-3 py-2 text-sm text-ink-muted">No matching clients.</p> : clientItems.map((client) => <button key={client.id} type="button" onClick={() => { setClientId(client.id); setSelectedClientName(client.name); setClientSearch(client.name); }} className="block w-full px-3 py-2 text-left text-sm hover:bg-paper-sunken"><span className="font-medium text-ink">{client.name}</span>{client.phone && <span className="ml-2 text-ink-muted">{client.phone}</span>}</button>)}</div>}
+            </div>
           )}
         </div>
 

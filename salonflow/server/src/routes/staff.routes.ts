@@ -6,15 +6,18 @@ import { setStaffStatus } from "../modules/staff/staffLifecycle";
 import { createStaffProfile, updateStaffProfile, setStaffSchedule, setStaffServices } from "../modules/staff/staffProfile";
 import { asyncHandler } from "../middleware/asyncHandler";
 import { rethrowIfDatabaseUnavailable } from "../middleware/errorHandler";
+import { pageResult, parsePagination } from "../core/pagination";
 
 export const staffRouter = Router();
 
 staffRouter.get("/", requirePermission("staff", "view"), asyncHandler(async (req, res) => {
-  const staff = await prisma.staff.findMany({
-    where: { businessId: req.actor!.businessId },
-    include: { services: { include: { service: true } }, schedule: true },
-  });
-  res.json(staff);
+  const { page, limit, skip } = parsePagination(req.query);
+  const where = { businessId: req.actor!.businessId };
+  const [items, total] = await Promise.all([
+    prisma.staff.findMany({ where, orderBy: [{ name: "asc" }, { id: "asc" }], skip, take: limit, include: { services: { include: { service: { select: { id: true, name: true } } } }, schedule: true } }),
+    prisma.staff.count({ where }),
+  ]);
+  res.json(pageResult(items, total, page, limit));
 }));
 
 staffRouter.get("/:id", requirePermission("staff", "view"), asyncHandler(async (req, res) => {
