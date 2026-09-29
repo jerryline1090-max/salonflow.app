@@ -176,6 +176,26 @@ enum PlanCode {
   PRO
 }
 
+// Commercial billing is deliberately distinct from salon-client payments.
+// The provider values are kept small so core subscription logic stays
+// provider-neutral as new providers are added.
+enum BillingProvider {
+  PAYSTACK
+}
+
+enum BillingInvoiceStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum BillingEventStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+}
+
 // ── AI Receptionist / multi-channel conversation enums ──────────────────
 
 enum ConversationChannel {
@@ -280,6 +300,8 @@ model Business {
   appointments     Appointment[]
   payments         Payment[]
   subscription     Subscription?
+  billingInvoices  BillingInvoice[]
+  billingEvents    BillingEvent[]
   notifications    Notification[]
   integrations     Integration[]
   workingHours     BusinessHours[]
@@ -299,6 +321,10 @@ model Subscription {
   business            Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
   planCode            PlanCode           @default(STARTER)
   status              SubscriptionStatus
+  provider            BillingProvider?
+  providerCustomerId  String?
+  providerSubscriptionId String?
+  providerPlanCode    String?
   trialEndsAt         DateTime?
   graceEndsAt         DateTime?
   currentPeriodEndsAt DateTime?
@@ -306,7 +332,51 @@ model Subscription {
   createdAt           DateTime           @default(now())
   updatedAt           DateTime           @updatedAt
 
+  billingInvoices     BillingInvoice[]
+
   @@index([status])
+  @@index([provider, providerCustomerId])
+  @@index([provider, providerSubscriptionId])
+}
+
+// Provider billing history. This is not the salon's operational Payment
+// ledger, which remains the source of truth for client appointment revenue.
+model BillingInvoice {
+  id                String               @id @default(cuid())
+  businessId        String
+  business          Business             @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  subscriptionId    String
+  subscription      Subscription         @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  provider          BillingProvider
+  providerReference String
+  amount            Int
+  currency          String               @default("NGN")
+  status            BillingInvoiceStatus @default(PENDING)
+  paidAt            DateTime?
+  occurredAt        DateTime
+  createdAt         DateTime             @default(now())
+
+  @@unique([provider, providerReference])
+  @@index([businessId, occurredAt])
+  @@index([subscriptionId, occurredAt])
+}
+
+// Incoming provider events are retained separately to make webhook handling
+// idempotent once route wiring is introduced in a later phase.
+model BillingEvent {
+  id              String             @id @default(cuid())
+  provider        BillingProvider
+  providerEventId String
+  eventType       String
+  status          BillingEventStatus @default(RECEIVED)
+  businessId      String?
+  business        Business?          @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  receivedAt      DateTime           @default(now())
+  processedAt     DateTime?
+  failureCode     String?
+
+  @@unique([provider, providerEventId])
+  @@index([businessId, receivedAt])
 }
 
 // Salon operating hours — business-wide. Staff-specific schedules live on Staff.
