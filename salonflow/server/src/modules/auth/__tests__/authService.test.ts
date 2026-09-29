@@ -32,7 +32,7 @@ describe("registerBusiness", () => {
     expect(prisma.business.create).not.toHaveBeenCalled();
   });
 
-  it("creates exactly one business with exactly one OWNER user and returns a token", async () => {
+  it("creates exactly one business with exactly one OWNER and a STARTER trial subscription", async () => {
     (prisma.user.findUnique as jest.Mock).mockResolvedValue(null);
     (hashPassword as jest.Mock).mockResolvedValue("hashed_pw");
     (signToken as jest.Mock).mockReturnValue("signed.jwt.token");
@@ -52,6 +52,17 @@ describe("registerBusiness", () => {
     const createArgs = (prisma.business.create as jest.Mock).mock.calls[0][0];
     expect(createArgs.data.users.create.role).toBe("OWNER");
     expect(createArgs.data.users.create.passwordHash).toBe("hashed_pw");
+    expect(createArgs.data.subscription.create).toEqual(expect.objectContaining({
+      planCode: "STARTER",
+      status: "TRIALING",
+      cancelAtPeriodEnd: false,
+      graceEndsAt: null,
+      currentPeriodEndsAt: null,
+    }));
+    expect(createArgs.data.subscription.create.trialEndsAt.getTime()).toBeGreaterThan(Date.now() + (13 * 24 * 60 * 60 * 1000));
+    expect(createArgs.data.subscription.create.trialEndsAt.getTime()).toBeLessThanOrEqual(Date.now() + (14 * 24 * 60 * 60 * 1000) + 1000);
+    expect(createArgs.data.onboardingStatus).toBe("IN_PROGRESS");
+    expect(createArgs.data.onboardingStep).toBe("BUSINESS_DETAILS");
 
     expect(signToken).toHaveBeenCalledWith({ sub: "user_1", businessId: "biz_1", role: "OWNER" });
     expect(result.token).toBe("signed.jwt.token");

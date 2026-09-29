@@ -1,4 +1,7 @@
 export type Role = "OWNER" | "MANAGER" | "STAFF";
+export type PlanCode = "STARTER" | "GROWTH" | "PRO";
+export type SubscriptionStatus = "TRIALING" | "ACTIVE" | "PAST_DUE" | "GRACE_PERIOD" | "SUSPENDED" | "CANCELLED";
+export type SubscriptionAccessState = "FULL_ACCESS" | "RECOVERY" | "SUSPENDED";
 
 export type AppointmentStatus = "PENDING" | "CONFIRMED" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
 export type LocationType = "SALON" | "HOME";
@@ -11,6 +14,16 @@ export interface User {
   role: Role;
   businessId: string;
   onboarding?: { onboardingStatus: "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED"; onboardingStep?: "BUSINESS_DETAILS" | "SERVICES" | "BUSINESS_HOURS" | "TEAM" | "INTEGRATIONS" | "REVIEW" | null };
+  subscription?: {
+    planCode: PlanCode;
+    status: SubscriptionStatus;
+    trialEndsAt: string | null;
+    graceEndsAt: string | null;
+    currentPeriodEndsAt: string | null;
+    cancelAtPeriodEnd: boolean;
+    accessState: SubscriptionAccessState;
+    trialDaysRemaining: number | null;
+  };
 }
 
 export interface BusinessHoursEntry {

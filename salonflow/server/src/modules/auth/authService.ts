@@ -2,6 +2,7 @@ import { Role } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { hashPassword, verifyPassword, signToken } from "../../core/auth";
 import { writeAuditLog } from "../../core/auditLog";
+import { createTrialSubscription } from "../subscriptions/subscriptionService";
 
 export class InvalidCredentialsError extends Error {
   constructor() {
@@ -49,6 +50,9 @@ export async function registerBusiness(input: RegisterBusinessInput) {
       phone: input.phone?.trim() || null,
       onboardingStatus: "IN_PROGRESS",
       onboardingStep: "BUSINESS_DETAILS",
+      subscription: {
+        create: createTrialSubscription(),
+      },
       users: {
         create: {
           name: input.ownerName.trim(),

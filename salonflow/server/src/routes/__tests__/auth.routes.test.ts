@@ -1,5 +1,17 @@
 jest.mock("../../lib/prisma");
 jest.mock("../../modules/auth/authService");
+jest.mock("../../modules/subscriptions/subscriptionService", () => ({
+  summarizeSubscription: jest.fn((subscription) => ({
+    planCode: subscription.planCode,
+    status: subscription.status,
+    trialEndsAt: subscription.trialEndsAt,
+    graceEndsAt: subscription.graceEndsAt,
+    currentPeriodEndsAt: subscription.currentPeriodEndsAt,
+    cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+    accessState: "FULL_ACCESS",
+    trialDaysRemaining: 14,
+  })),
+}));
 
 import express from "express";
 import request from "supertest";
@@ -102,6 +114,42 @@ describe("GET /api/auth/team", () => {
 });
 
 describe("GET /api/auth/me", () => {
+  it("returns a safe business subscription summary without provider details", async () => {
+    const token = signToken({ sub: "owner_1", businessId: "biz_1", role: "OWNER" });
+    (prisma.user.findUnique as jest.Mock).mockResolvedValue({
+      id: "owner_1",
+      name: "Amaka",
+      email: "amaka@test.com",
+      role: "OWNER",
+      businessId: "biz_1",
+      business: {
+        onboardingStatus: "IN_PROGRESS",
+        onboardingStep: "BUSINESS_DETAILS",
+        subscription: {
+          planCode: "STARTER",
+          status: "TRIALING",
+          trialEndsAt: new Date("2026-10-14T00:00:00.000Z"),
+          graceEndsAt: null,
+          currentPeriodEndsAt: null,
+          cancelAtPeriodEnd: false,
+          providerCustomerId: "must-not-leak",
+        },
+      },
+    });
+
+    const res = await request(buildApp()).get("/api/auth/me").set("Authorization", `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.subscription).toEqual(expect.objectContaining({
+      planCode: "STARTER",
+      status: "TRIALING",
+      cancelAtPeriodEnd: false,
+      accessState: "FULL_ACCESS",
+    }));
+    expect(res.body.subscription.providerCustomerId).toBeUndefined();
+    expect(res.body.onboarding).toEqual({ onboardingStatus: "IN_PROGRESS", onboardingStep: "BUSINESS_DETAILS" });
+  });
+
   it("returns a safe 503 for a Prisma connectivity failure", async () => {
     const token = signToken({ sub: "owner_1", businessId: "biz_1", role: "OWNER" });
     (prisma.user.findUnique as jest.Mock).mockRejectedValue(new Prisma.PrismaClientKnownRequestError("Can't reach database server", { code: "P1001", clientVersion: "5.18.0" }));

@@ -5,6 +5,7 @@ import { requirePermission } from "../middleware/authorize";
 import { prisma } from "../lib/prisma";
 import { asyncHandler } from "../middleware/asyncHandler";
 import { rethrowIfDatabaseUnavailable } from "../middleware/errorHandler";
+import { summarizeSubscription } from "../modules/subscriptions/subscriptionService";
 
 export const authRouter = Router();
 
@@ -43,9 +44,30 @@ authRouter.post("/login", asyncHandler(async (req, res) => {
 
 // Everything below requires a valid token.
 authRouter.get("/me", authenticate, asyncHandler(async (req, res) => {
-  const user = await prisma.user.findUnique({ where: { id: req.actor!.userId }, include: { business: { select: { onboardingStatus: true, onboardingStep: true } } } });
+  const user = await prisma.user.findUnique({
+    where: { id: req.actor!.userId },
+    include: {
+      business: {
+        select: {
+          onboardingStatus: true,
+          onboardingStep: true,
+          subscription: true,
+        },
+      },
+    },
+  });
   if (!user) return res.status(404).json({ error: "User not found" });
-  res.json({ id: user.id, name: user.name, email: user.email, role: user.role, businessId: user.businessId, onboarding: user.role === "OWNER" ? user.business : undefined });
+  res.json({
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    businessId: user.businessId,
+    onboarding: user.role === "OWNER"
+      ? { onboardingStatus: user.business.onboardingStatus, onboardingStep: user.business.onboardingStep }
+      : undefined,
+    subscription: user.business.subscription ? summarizeSubscription(user.business.subscription) : undefined,
+  });
 }));
 
 // Section 28: viewing the team is a lighter bar than creating an account —

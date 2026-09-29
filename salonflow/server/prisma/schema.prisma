@@ -159,6 +159,23 @@ enum OnboardingStep {
   REVIEW
 }
 
+// Commercial subscription state is deliberately separate from operational
+// salon-client payments. Provider-specific billing data is introduced later.
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  GRACE_PERIOD
+  SUSPENDED
+  CANCELLED
+}
+
+enum PlanCode {
+  STARTER
+  GROWTH
+  PRO
+}
+
 // ── AI Receptionist / multi-channel conversation enums ──────────────────
 
 enum ConversationChannel {
@@ -262,6 +279,7 @@ model Business {
   clients          Client[]
   appointments     Appointment[]
   payments         Payment[]
+  subscription     Subscription?
   notifications    Notification[]
   integrations     Integration[]
   workingHours     BusinessHours[]
@@ -271,6 +289,24 @@ model Business {
   clientChannelIdentities ClientChannelIdentity[]
   assistantConversations AssistantConversation[]
   reputationRequests ReputationRequest[]
+}
+
+// One provider-neutral commercial subscription per business. The existing
+// Payment model remains exclusively for revenue received from salon clients.
+model Subscription {
+  id                  String             @id @default(cuid())
+  businessId          String             @unique
+  business            Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  planCode            PlanCode           @default(STARTER)
+  status              SubscriptionStatus
+  trialEndsAt         DateTime?
+  graceEndsAt         DateTime?
+  currentPeriodEndsAt DateTime?
+  cancelAtPeriodEnd   Boolean            @default(false)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  @@index([status])
 }
 
 // Salon operating hours — business-wide. Staff-specific schedules live on Staff.
