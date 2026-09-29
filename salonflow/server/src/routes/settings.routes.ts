@@ -4,6 +4,8 @@ import { requirePermission } from "../middleware/authorize";
 import { writeAuditLog } from "../core/auditLog";
 import { assertValidTimezone } from "../core/timezone";
 import { saveBusinessHours } from "../modules/settings/businessHoursService";
+import { asyncHandler } from "../middleware/asyncHandler";
+import { rethrowIfDatabaseUnavailable } from "../middleware/errorHandler";
 
 export const settingsRouter = Router();
 
@@ -30,16 +32,16 @@ const EDITABLE_FIELDS = [
   "googleReviewUrl",
 ] as const;
 
-settingsRouter.get("/", requirePermission("settings", "view"), async (req, res) => {
+settingsRouter.get("/", requirePermission("settings", "view"), asyncHandler(async (req, res) => {
   const business = await prisma.business.findUnique({
     where: { id: req.actor!.businessId },
     include: { workingHours: true },
   });
   if (!business) return res.status(404).json({ error: "Business not found" });
   res.json(business);
-});
+}));
 
-settingsRouter.put("/", requirePermission("settings", "edit"), async (req, res) => {
+settingsRouter.put("/", requirePermission("settings", "edit"), asyncHandler(async (req, res) => {
   try {
     const before = await prisma.business.findUniqueOrThrow({ where: { id: req.actor!.businessId } });
 
@@ -63,11 +65,12 @@ settingsRouter.put("/", requirePermission("settings", "edit"), async (req, res) 
 
     res.json(updated);
   } catch (err: any) {
+    rethrowIfDatabaseUnavailable(err);
     res.status(400).json({ error: err.message });
   }
-});
+}));
 
-settingsRouter.put("/working-hours", requirePermission("settings", "edit"), async (req, res) => {
+settingsRouter.put("/working-hours", requirePermission("settings", "edit"), asyncHandler(async (req, res) => {
   try {
     const { hours } = req.body as { hours: { dayOfWeek: number; openTime: string; closeTime: string; isClosed: boolean }[] };
     const businessId = req.actor!.businessId!;
@@ -75,6 +78,7 @@ settingsRouter.put("/working-hours", requirePermission("settings", "edit"), asyn
 
     res.json({ success: true });
   } catch (err: any) {
+    rethrowIfDatabaseUnavailable(err);
     res.status(400).json({ error: err.message });
   }
-});
+}));

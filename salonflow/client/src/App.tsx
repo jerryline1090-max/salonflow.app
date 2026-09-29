@@ -15,6 +15,7 @@ import { ReportsPage } from "@/pages/ReportsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { NotificationsPage } from "@/pages/NotificationsPage";
 import { requiresOnboarding } from "@/onboardingRouting";
+import { Button } from "@/components/Button";
 
 function LoginRoute() {
   const { user, loading } = useAuth();
@@ -34,7 +35,18 @@ export function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Routes>
+        <AuthBootstrapGate />
+      </AuthProvider>
+    </BrowserRouter>
+  );
+}
+
+function AuthBootstrapGate() {
+  const { loading, bootstrapError, retryBootstrap, logout } = useAuth();
+  if (loading) return <AuthLoadingState />;
+  if (bootstrapError) return <AuthUnavailableState onRetry={retryBootstrap} onSignOut={logout} />;
+  return (
+    <Routes>
           <Route path="/login" element={<LoginRoute />} />
           <Route path="/register" element={<RegisterRoute />} />
           <Route path="/onboarding" element={<OnboardingRoute />} />
@@ -119,10 +131,17 @@ export function App() {
             }
           />
           <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </AuthProvider>
-    </BrowserRouter>
+    </Routes>
   );
+}
+
+function AuthLoadingState() {
+  return <div className="flex min-h-screen items-center justify-center bg-workspace px-4"><div className="text-center"><p className="font-display text-2xl text-ink">SalonFlow</p><p className="mt-2 text-sm text-ink-muted">Checking your session…</p></div></div>;
+}
+
+function AuthUnavailableState({ onRetry, onSignOut }: { onRetry: () => Promise<void>; onSignOut: () => void }) {
+  const retry = () => { void onRetry(); };
+  return <div className="flex min-h-screen items-center justify-center bg-workspace px-4"><div className="w-full max-w-sm rounded-lg border border-line bg-paper-raised p-6 text-center shadow-card"><p className="font-display text-2xl text-ink">SalonFlow</p><h1 className="mt-5 text-lg font-medium text-ink">SalonFlow is temporarily unavailable</h1><p className="mt-2 text-sm text-ink-muted">Your session is preserved. Please try again shortly.</p><div className="mt-5 flex justify-center gap-3"><Button onClick={retry}>Retry</Button><Button variant="secondary" onClick={onSignOut}>Sign out</Button></div></div></div>;
 }
 
 function OnboardingRoute() {

@@ -7,11 +7,14 @@ import { prisma } from "../../lib/prisma";
 import { authRouter } from "../auth.routes";
 import { signToken } from "../../core/auth";
 import { registerBusiness, login, createTeamMember, InvalidCredentialsError } from "../../modules/auth/authService";
+import { errorHandler } from "../../middleware/errorHandler";
+import { Prisma } from "@prisma/client";
 
 function buildApp() {
   const app = express();
   app.use(express.json());
   app.use("/api/auth", authRouter);
+  app.use(errorHandler);
   return app;
 }
 
@@ -95,6 +98,18 @@ describe("GET /api/auth/team", () => {
 
     expect(res.status).toBe(200);
     expect((prisma.user.findMany as jest.Mock).mock.calls[0][0].where).toEqual({ businessId: "biz_1" });
+  });
+});
+
+describe("GET /api/auth/me", () => {
+  it("returns a safe 503 for a Prisma connectivity failure", async () => {
+    const token = signToken({ sub: "owner_1", businessId: "biz_1", role: "OWNER" });
+    (prisma.user.findUnique as jest.Mock).mockRejectedValue(new Prisma.PrismaClientKnownRequestError("Can't reach database server", { code: "P1001", clientVersion: "5.18.0" }));
+
+    const res = await request(buildApp()).get("/api/auth/me").set("Authorization", `Bearer ${token}`);
+
+    expect(res.status).toBe(503);
+    expect(res.body.error).toMatch(/temporarily unavailable/i);
   });
 });
 

@@ -10,13 +10,15 @@ import {
   acknowledgeAttention,
 } from "../modules/appointments/appointmentService";
 import { resolveOwnStaffId } from "../modules/staff/resolveOwnStaffId";
+import { asyncHandler } from "../middleware/asyncHandler";
+import { rethrowIfDatabaseUnavailable } from "../middleware/errorHandler";
 
 export const appointmentsRouter = Router();
 
 // Every handler below assumes `authenticate` has already run (mounted in
 // index.ts) so `req.actor` is guaranteed to be set.
 
-appointmentsRouter.get("/", requirePermission("appointments", "view"), async (req, res) => {
+appointmentsRouter.get("/", requirePermission("appointments", "view"), asyncHandler(async (req, res) => {
   const { from, to, status, needsAttention, staffId, clientId } = req.query as Record<string, string>;
 
   const where: any = { businessId: req.actor!.businessId };
@@ -41,9 +43,9 @@ appointmentsRouter.get("/", requirePermission("appointments", "view"), async (re
     include: { client: true, service: true, staff: true },
   });
   res.json(appointments);
-});
+}));
 
-appointmentsRouter.get("/:id", requirePermission("appointments", "view"), async (req, res) => {
+appointmentsRouter.get("/:id", requirePermission("appointments", "view"), asyncHandler(async (req, res) => {
   const appointment = await prisma.appointment.findUnique({
     where: { id: req.params.id },
     include: { client: true, service: true, staff: true, events: { orderBy: { createdAt: "asc" } } },
@@ -62,9 +64,9 @@ appointmentsRouter.get("/:id", requirePermission("appointments", "view"), async 
     throw err;
   }
   res.json(appointment);
-});
+}));
 
-appointmentsRouter.post("/", requirePermission("appointments", "create"), async (req, res) => {
+appointmentsRouter.post("/", requirePermission("appointments", "create"), asyncHandler(async (req, res) => {
   try {
     const appointment = await createAppointment({
       // businessId ALWAYS comes from the authenticated actor, never the
@@ -82,11 +84,12 @@ appointmentsRouter.post("/", requirePermission("appointments", "create"), async 
     });
     res.status(201).json(appointment);
   } catch (err: any) {
+    rethrowIfDatabaseUnavailable(err);
     res.status(400).json({ error: err.message });
   }
-});
+}));
 
-appointmentsRouter.post("/:id/status", requirePermission("appointments", "edit"), async (req, res) => {
+appointmentsRouter.post("/:id/status", requirePermission("appointments", "edit"), asyncHandler(async (req, res) => {
   try {
     const existing = await prisma.appointment.findUniqueOrThrow({ where: { id: req.params.id } });
     assertBelongsToBusiness(req.actor!, existing.businessId, "appointment");
@@ -105,12 +108,13 @@ appointmentsRouter.post("/:id/status", requirePermission("appointments", "edit")
     });
     res.json(updated);
   } catch (err: any) {
+    rethrowIfDatabaseUnavailable(err);
     if (err instanceof ForbiddenError) return res.status(403).json({ error: err.message });
     res.status(400).json({ error: err.message });
   }
-});
+}));
 
-appointmentsRouter.post("/:id/reschedule", requirePermission("appointments", "edit"), async (req, res) => {
+appointmentsRouter.post("/:id/reschedule", requirePermission("appointments", "edit"), asyncHandler(async (req, res) => {
   try {
     const existing = await prisma.appointment.findUniqueOrThrow({ where: { id: req.params.id } });
     assertBelongsToBusiness(req.actor!, existing.businessId, "appointment");
@@ -128,12 +132,13 @@ appointmentsRouter.post("/:id/reschedule", requirePermission("appointments", "ed
     });
     res.json(updated);
   } catch (err: any) {
+    rethrowIfDatabaseUnavailable(err);
     if (err instanceof ForbiddenError) return res.status(403).json({ error: err.message });
     res.status(400).json({ error: err.message });
   }
-});
+}));
 
-appointmentsRouter.post("/:id/acknowledge-attention", requirePermission("appointments", "edit"), async (req, res) => {
+appointmentsRouter.post("/:id/acknowledge-attention", requirePermission("appointments", "edit"), asyncHandler(async (req, res) => {
   try {
     const existing = await prisma.appointment.findUniqueOrThrow({ where: { id: req.params.id } });
     assertBelongsToBusiness(req.actor!, existing.businessId, "appointment");
@@ -147,12 +152,13 @@ appointmentsRouter.post("/:id/acknowledge-attention", requirePermission("appoint
     const updated = await acknowledgeAttention({ appointmentId: req.params.id, actor: { type: "USER", userId: req.actor!.userId } });
     res.json(updated);
   } catch (err: any) {
+    rethrowIfDatabaseUnavailable(err);
     if (err instanceof ForbiddenError) return res.status(403).json({ error: err.message });
     res.status(400).json({ error: err.message });
   }
-});
+}));
 
-appointmentsRouter.post("/:id/reassign", requirePermission("appointments", "edit"), async (req, res) => {
+appointmentsRouter.post("/:id/reassign", requirePermission("appointments", "edit"), asyncHandler(async (req, res) => {
   // Reassigning to a different staff member is a step above ordinary
   // appointment editing — it's an owner/manager decision (section 11), not
   // something the "edit" permission on its own should hand to any staff
@@ -172,7 +178,8 @@ appointmentsRouter.post("/:id/reassign", requirePermission("appointments", "edit
     });
     res.json(updated);
   } catch (err: any) {
+    rethrowIfDatabaseUnavailable(err);
     if (err instanceof ForbiddenError) return res.status(403).json({ error: err.message });
     res.status(400).json({ error: err.message });
   }
-});
+}));

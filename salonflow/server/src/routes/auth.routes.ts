@@ -3,11 +3,13 @@ import { registerBusiness, login, createTeamMember, InvalidCredentialsError, Acc
 import { authenticate } from "../middleware/authenticate";
 import { requirePermission } from "../middleware/authorize";
 import { prisma } from "../lib/prisma";
+import { asyncHandler } from "../middleware/asyncHandler";
+import { rethrowIfDatabaseUnavailable } from "../middleware/errorHandler";
 
 export const authRouter = Router();
 
 // Public — this is the only way a Business + its OWNER account come into existence.
-authRouter.post("/register", async (req, res) => {
+authRouter.post("/register", asyncHandler(async (req, res) => {
   try {
     const { businessName, ownerName, email, password, phone } = req.body;
     if (!businessName || !ownerName || !email || !password) {
@@ -16,12 +18,13 @@ authRouter.post("/register", async (req, res) => {
     const { business, user, token } = await registerBusiness({ businessName, ownerName, email, password, phone });
     res.status(201).json({ token, business, user: { id: user.id, name: user.name, email: user.email, role: user.role, businessId: business.id } });
   } catch (err: any) {
+    rethrowIfDatabaseUnavailable(err);
     res.status(400).json({ error: err.message });
   }
-});
+}));
 
 // Public.
-authRouter.post("/login", async (req, res) => {
+authRouter.post("/login", asyncHandler(async (req, res) => {
   try {
     const { email, password } = req.body;
     const { user, token } = await login({ email, password });
@@ -36,30 +39,30 @@ authRouter.post("/login", async (req, res) => {
     console.error("Login failed", err);
     res.status(503).json({ error: "We couldn't connect to SalonFlow right now. Please try again shortly." });
   }
-});
+}));
 
 // Everything below requires a valid token.
-authRouter.get("/me", authenticate, async (req, res) => {
+authRouter.get("/me", authenticate, asyncHandler(async (req, res) => {
   const user = await prisma.user.findUnique({ where: { id: req.actor!.userId }, include: { business: { select: { onboardingStatus: true, onboardingStep: true } } } });
   if (!user) return res.status(404).json({ error: "User not found" });
   res.json({ id: user.id, name: user.name, email: user.email, role: user.role, businessId: user.businessId, onboarding: user.role === "OWNER" ? user.business : undefined });
-});
+}));
 
 // Section 28: viewing the team is a lighter bar than creating an account —
 // "staff:view" (which MANAGER has by default, unlike "staff:create").
-authRouter.get("/team", authenticate, requirePermission("staff", "view"), async (req, res) => {
+authRouter.get("/team", authenticate, requirePermission("staff", "view"), asyncHandler(async (req, res) => {
   const users = await prisma.user.findMany({
     where: { businessId: req.actor!.businessId },
     select: { id: true, name: true, email: true, role: true, isActive: true, createdAt: true },
     orderBy: { createdAt: "asc" },
   });
   res.json(users);
-});
+}));
 
 // Section 28: only an OWNER may create team accounts and assign their role
 // (MANAGER default permissions don't include "staff:create" — see core/permissions.ts —
 // so this 403s for anyone but an OWNER unless the business explicitly overrides it).
-authRouter.post("/team", authenticate, requirePermission("staff", "create"), async (req, res) => {
+authRouter.post("/team", authenticate, requirePermission("staff", "create"), asyncHandler(async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
     if (role === "OWNER") {
@@ -75,6 +78,7 @@ authRouter.post("/team", authenticate, requirePermission("staff", "create"), asy
     });
     res.status(201).json({ id: user.id, name: user.name, email: user.email, role: user.role });
   } catch (err: any) {
+    rethrowIfDatabaseUnavailable(err);
     res.status(400).json({ error: err.message });
   }
-});
+}));

@@ -3,6 +3,8 @@ import { prisma } from "../lib/prisma";
 import { requirePermission } from "../middleware/authorize";
 import { assertBelongsToBusiness, ForbiddenError } from "../core/tenantGuard";
 import { canViewNotification, notificationVisibilityWhere } from "../modules/notifications/notificationVisibility";
+import { asyncHandler } from "../middleware/asyncHandler";
+import { rethrowIfDatabaseUnavailable } from "../middleware/errorHandler";
 
 export const notificationsRouter = Router();
 
@@ -13,7 +15,7 @@ export const notificationsRouter = Router();
  * only sees notifications actually meant for them; owner/manager-level
  * business alerts stay out of their feed.
  */
-notificationsRouter.get("/", requirePermission("dashboard", "view"), async (req, res) => {
+notificationsRouter.get("/", requirePermission("dashboard", "view"), asyncHandler(async (req, res) => {
   const where: any = notificationVisibilityWhere(req.actor!);
   if (req.query.unreadOnly === "true") {
     where.isRead = false;
@@ -26,9 +28,9 @@ notificationsRouter.get("/", requirePermission("dashboard", "view"), async (req,
     take: limit,
   });
   res.json(notifications);
-});
+}));
 
-notificationsRouter.post("/:id/read", requirePermission("dashboard", "view"), async (req, res) => {
+notificationsRouter.post("/:id/read", requirePermission("dashboard", "view"), asyncHandler(async (req, res) => {
   try {
     const notification = await prisma.notification.findUniqueOrThrow({ where: { id: req.params.id } });
     assertBelongsToBusiness(req.actor!, notification.businessId, "notification");
@@ -39,7 +41,8 @@ notificationsRouter.post("/:id/read", requirePermission("dashboard", "view"), as
     const updated = await prisma.notification.update({ where: { id: req.params.id }, data: { isRead: true } });
     res.json(updated);
   } catch (err: any) {
+    rethrowIfDatabaseUnavailable(err);
     if (err instanceof ForbiddenError) return res.status(403).json({ error: err.message });
     res.status(400).json({ error: err.message });
   }
-});
+}));

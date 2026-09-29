@@ -8,6 +8,7 @@ import {
   getClientRetentionReport,
 } from "../modules/reports/reportService";
 import { InvalidReportRangeError, resolveReportRange } from "../modules/reports/reportRange";
+import { asyncHandler } from "../middleware/asyncHandler";
 
 export const reportsRouter = Router();
 
@@ -22,26 +23,26 @@ async function withRange(req: any, res: any, getReport: (businessId: string, fro
     res.json(await getReport(businessId, from, to));
   } catch (err: any) {
     if (err instanceof InvalidReportRangeError) return res.status(400).json({ error: err.message });
-    res.status(400).json({ error: err.message });
+    throw err;
   }
 }
 
-reportsRouter.get("/revenue", requirePermission("reports", "view"), async (req, res) => {
+reportsRouter.get("/revenue", requirePermission("reports", "view"), asyncHandler(async (req, res) => {
   await withRange(req, res, getRevenueReport);
-});
+}));
 
-reportsRouter.get("/outcomes", requirePermission("reports", "view"), async (req, res) => {
+reportsRouter.get("/outcomes", requirePermission("reports", "view"), asyncHandler(async (req, res) => {
   await withRange(req, res, getAppointmentOutcomeReport);
-});
+}));
 
-reportsRouter.get("/popular-services", requirePermission("reports", "view"), async (req, res) => {
+reportsRouter.get("/popular-services", requirePermission("reports", "view"), asyncHandler(async (req, res) => {
   await withRange(req, res, getPopularServicesReport);
-});
+}));
 
-reportsRouter.get("/staff-performance", requirePermission("reports", "view"), async (req, res) => {
+reportsRouter.get("/staff-performance", requirePermission("reports", "view"), asyncHandler(async (req, res) => {
   await withRange(req, res, getStaffPerformanceReport);
-});
+}));
 
-reportsRouter.get("/client-retention", requirePermission("reports", "view"), async (req, res) => {
+reportsRouter.get("/client-retention", requirePermission("reports", "view"), asyncHandler(async (req, res) => {
   res.json(await getClientRetentionReport(req.actor!.businessId!));
-});
+}));

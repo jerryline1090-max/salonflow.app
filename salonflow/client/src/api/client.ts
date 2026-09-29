@@ -2,6 +2,7 @@ import type { ApiErrorBody } from "@/types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 const TOKEN_STORAGE_KEY = "salonflow.token";
+const REQUEST_TIMEOUT_MS = 15_000;
 
 export class ApiError extends Error {
   constructor(
@@ -10,6 +11,13 @@ export class ApiError extends Error {
   ) {
     super(message);
     this.name = "ApiError";
+  }
+}
+
+export class ApiUnavailableError extends ApiError {
+  constructor(public readonly reason: "network" | "timeout") {
+    super("SalonFlow is temporarily unavailable. Please try again shortly.", 503);
+    this.name = "ApiUnavailableError";
   }
 }
 
@@ -48,14 +56,25 @@ function buildUrl(path: string, query?: RequestOptions["query"]): string {
  */
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const token = getToken();
-  const res = await fetch(buildUrl(path, options.query), {
-    method: options.method ?? "GET",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
-  });
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(buildUrl(path, options.query), {
+      method: options.method ?? "GET",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.aborted) throw new ApiUnavailableError("timeout");
+    throw new ApiUnavailableError("network");
+  } finally {
+    window.clearTimeout(timeout);
+  }
 
   if (res.status === 401) {
     setToken(null);

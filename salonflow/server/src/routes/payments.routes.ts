@@ -3,19 +3,21 @@ import { prisma } from "../lib/prisma";
 import { requirePermission } from "../middleware/authorize";
 import { assertBelongsToBusiness, ForbiddenError } from "../core/tenantGuard";
 import { recordPayment, getOutstandingBalance } from "../modules/payments/paymentService";
+import { asyncHandler } from "../middleware/asyncHandler";
+import { rethrowIfDatabaseUnavailable } from "../middleware/errorHandler";
 
 export const paymentsRouter = Router();
 
-paymentsRouter.get("/", requirePermission("payments", "view"), async (req, res) => {
+paymentsRouter.get("/", requirePermission("payments", "view"), asyncHandler(async (req, res) => {
   const payments = await prisma.payment.findMany({
     where: { businessId: req.actor!.businessId },
     orderBy: { createdAt: "desc" },
     include: { client: true, appointment: { include: { service: true } } },
   });
   res.json(payments);
-});
+}));
 
-paymentsRouter.post("/", requirePermission("payments", "create"), async (req, res) => {
+paymentsRouter.post("/", requirePermission("payments", "create"), asyncHandler(async (req, res) => {
   try {
     if (req.body.appointmentId) {
       const appointment = await prisma.appointment.findUniqueOrThrow({ where: { id: req.body.appointmentId } });
@@ -31,18 +33,20 @@ paymentsRouter.post("/", requirePermission("payments", "create"), async (req, re
     });
     res.status(201).json(payment);
   } catch (err: any) {
+    rethrowIfDatabaseUnavailable(err);
     if (err instanceof ForbiddenError) return res.status(403).json({ error: err.message });
     res.status(400).json({ error: err.message });
   }
-});
+}));
 
-paymentsRouter.get("/appointments/:appointmentId/outstanding", requirePermission("payments", "view"), async (req, res) => {
+paymentsRouter.get("/appointments/:appointmentId/outstanding", requirePermission("payments", "view"), asyncHandler(async (req, res) => {
   try {
     const appointment = await prisma.appointment.findUniqueOrThrow({ where: { id: req.params.appointmentId } });
     assertBelongsToBusiness(req.actor!, appointment.businessId, "appointment");
     res.json(await getOutstandingBalance(req.params.appointmentId));
   } catch (err: any) {
+    rethrowIfDatabaseUnavailable(err);
     if (err instanceof ForbiddenError) return res.status(403).json({ error: err.message });
     res.status(400).json({ error: err.message });
   }
-});
+}));

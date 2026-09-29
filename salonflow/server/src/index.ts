@@ -25,12 +25,42 @@ import { notificationsRouter } from "./routes/notifications.routes";
 import { onboardingRouter } from "./routes/onboarding.routes";
 import { queuePendingReputationRequests, sendPendingReputationRequests } from "./modules/reputation/reputationService";
 import { startScheduledJobs } from "./jobs/scheduler";
+import { stopScheduledJobs } from "./jobs/scheduler";
+import { prisma } from "./lib/prisma";
+import { asyncHandler, protectRouterAsyncHandlers } from "./middleware/asyncHandler";
+import { errorHandler } from "./middleware/errorHandler";
+import { healthRouter } from "./routes/health.routes";
+
+protectRouterAsyncHandlers(
+  authRouter,
+  appointmentsRouter,
+  staffRouter,
+  clientsRouter,
+  paymentsRouter,
+  reportsRouter,
+  settingsRouter,
+  servicesRouter,
+  knowledgeBaseRouter,
+  conversationsRouter,
+  assistantRouter,
+  webhooksRouter,
+  publicChatRouter,
+  integrationsCallbackRouter,
+  integrationsRouter,
+  reputationRouter,
+  notificationsRouter,
+  onboardingRouter,
+  healthRouter,
+);
 
 // Wire every event listener once, at boot. This is the only place
 // side-effects (notifications, etc.) get attached to core domain events.
 registerNotificationListeners();
 
 const app = express();
+// These endpoints are intentionally outside /api and unauthenticated so a
+// platform can distinguish a live Node process from a database-ready API.
+app.use(healthRouter);
 const productionOrigins = ["https://app.salonflow.com"];
 const developmentOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? "http://localhost:5173,http://127.0.0.1:5173")
   .split(",")
@@ -95,27 +125,24 @@ app.use("/api/onboarding", onboardingRouter);
 // ── Internal/system endpoints: no human actor, gated by a shared secret
 //    instead of a user JWT. Run this on a schedule (cron/worker), not from
 //    the dashboard. It only ever flags — see attentionScanner.ts (section 7).
-app.post("/api/internal/scan-attention", requireInternalKey, async (_req, res) => {
+app.post("/api/internal/scan-attention", requireInternalKey, asyncHandler(async (_req, res) => {
   res.json(await scanForAppointmentsNeedingAttention());
-});
+}));
 
 // Section 30: run on a schedule too (e.g. hourly). Split into two steps so
 // queuing (who's owed a request) and sending (actually reaching them) can
 // be observed/retried independently.
-app.post("/api/internal/reputation/queue", requireInternalKey, async (_req, res) => {
+app.post("/api/internal/reputation/queue", requireInternalKey, asyncHandler(async (_req, res) => {
   res.json(await queuePendingReputationRequests());
-});
-app.post("/api/internal/reputation/send", requireInternalKey, async (_req, res) => {
+}));
+app.post("/api/internal/reputation/send", requireInternalKey, asyncHandler(async (_req, res) => {
   res.json(await sendPendingReputationRequests());
-});
+}));
 
-app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error(err);
-  res.status(500).json({ error: "Internal server error" });
-});
+app.use(errorHandler);
 
 const port = process.env.PORT ?? 4000;
-app.listen(port, () => {
+const server = app.listen(port, () => {
   console.log(`SalonFlow API listening on port ${port}`);
 
   // See jobs/scheduler.ts for the multi-instance caveat — set
@@ -127,3 +154,26 @@ app.listen(port, () => {
     console.log("[scheduler] Disabled via ENABLE_SCHEDULER=false");
   }
 });
+
+let shuttingDown = false;
+function shutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`Received ${signal}; shutting down gracefully`);
+  stopScheduledJobs();
+
+  const forceExit = setTimeout(() => process.exit(1), 10_000);
+  forceExit.unref();
+  server.close(() => {
+    prisma
+      .$disconnect()
+      .catch((error) => console.error("Prisma disconnect failed", { name: error instanceof Error ? error.name : "UnknownError" }))
+      .finally(() => {
+        clearTimeout(forceExit);
+        process.exit(0);
+      });
+  });
+}
+
+process.once("SIGTERM", () => shutdown("SIGTERM"));
+process.once("SIGINT", () => shutdown("SIGINT"));

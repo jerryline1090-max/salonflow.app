@@ -1,11 +1,13 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { authApi } from "@/api/resources";
-import { getToken, setToken } from "@/api/client";
+import { ApiError, getToken, setToken } from "@/api/client";
 import type { User } from "@/types";
 
 interface AuthContextValue {
   user: User | null;
   loading: boolean;
+  bootstrapError: boolean;
+  retryBootstrap: () => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   register: (input: { businessName: string; ownerName: string; email: string; password: string; phone: string }) => Promise<void>;
   logout: () => void;
@@ -16,19 +18,37 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [bootstrapError, setBootstrapError] = useState(false);
 
-  useEffect(() => {
+  const bootstrap = useCallback(async () => {
     const token = getToken();
     if (!token) {
+      setUser(null);
+      setBootstrapError(false);
       setLoading(false);
       return;
     }
-    authApi
-      .me()
-      .then(setUser)
-      .catch(() => setToken(null))
-      .finally(() => setLoading(false));
+    setLoading(true);
+    setBootstrapError(false);
+    try {
+      setUser(await authApi.me());
+    } catch (error) {
+      setUser(null);
+      if (error instanceof ApiError && error.status === 401) {
+        setToken(null);
+      } else {
+        // Keep a valid-looking stored session during a temporary outage. A
+        // protected route remains blocked until /auth/me succeeds on retry.
+        setBootstrapError(true);
+      }
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void bootstrap();
+  }, [bootstrap]);
 
   async function login(email: string, password: string) {
     const { token } = await authApi.login(email, password);
@@ -47,7 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }
 
-  return <AuthContext.Provider value={{ user, loading, login, register, logout }}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={{ user, loading, bootstrapError, retryBootstrap: bootstrap, login, register, logout }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth(): AuthContextValue {
