@@ -4,6 +4,9 @@ import { useBusiness, useStaff } from "@/hooks/useAppData";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { EmptyState } from "@/components/EmptyState";
+import { PageContainer } from "@/components/PageContainer";
+import { PageHeader } from "@/components/PageHeader";
+import { Alert } from "@/components/Alert";
 import { CreateAppointmentModal } from "@/components/CreateAppointmentModal";
 import { AppointmentDetailModal } from "@/components/AppointmentDetailModal";
 import { RescheduleModal } from "@/components/RescheduleModal";
@@ -32,7 +35,7 @@ export function CalendarPage() {
 
   const { data: business } = useBusiness();
   const { data: staff } = useStaff();
-  const { data: appointments } = useAppointments({ from: startOfDayIso(selectedDate), to: endOfDayIso(selectedDate) });
+  const { data: appointments, isError } = useAppointments({ from: startOfDayIso(selectedDate), to: endOfDayIso(selectedDate) });
 
   const dayOfWeek = selectedDate.getDay();
   const activeStaff = useMemo(() => (staff ?? []).filter((s) => s.status === "ACTIVE"), [staff]);
@@ -58,16 +61,10 @@ export function CalendarPage() {
   }
 
   return (
-    <div className="p-4 sm:p-8">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="font-display text-2xl text-ink">Calendar</h1>
-          <p className="mt-0.5 text-sm text-ink-muted">Who's free, and when — click any open slot to book it.</p>
-        </div>
-        <Button onClick={() => setCreatePrefill({})}>New appointment</Button>
-      </div>
+    <PageContainer>
+      <PageHeader title="Calendar" description="Who’s free, and when—choose an available slot to book it." actions={<Button onClick={() => setCreatePrefill({})}>New appointment</Button>} />
 
-      <div className="mb-4 flex items-center gap-3">
+      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface p-2">
         <Button size="sm" variant="secondary" onClick={() => setSelectedDate((d) => dateWithDayOffset(d, -1))} aria-label="Previous day">
           ←
         </Button>
@@ -77,11 +74,11 @@ export function CalendarPage() {
         <Button size="sm" variant="secondary" onClick={() => setSelectedDate((d) => dateWithDayOffset(d, 1))} aria-label="Next day">
           →
         </Button>
-        <p className="ml-2 font-display text-lg text-ink">{formatDate(selectedDate.toISOString())}</p>
+        <p className="ml-1 font-display text-lg text-ink">{formatDate(selectedDate.toISOString())}</p>
       </div>
 
       <Card className="overflow-hidden">
-        {businessClosedToday ? (
+        {isError ? <Alert tone="error" className="m-5">The calendar could not be loaded.</Alert> : businessClosedToday ? (
           <EmptyState title="Closed today" description="This salon isn't open on this day — check Settings to adjust working hours." />
         ) : activeStaff.length === 0 ? (
           <EmptyState title="No active staff to schedule" description="Add a staff member to start filling in the calendar." />
@@ -139,18 +136,19 @@ export function CalendarPage() {
                           const top = ((startMin - gridStart) / SLOT_MINUTES) * ROW_HEIGHT;
                           const height = Math.max(((endMin - startMin) / SLOT_MINUTES) * ROW_HEIGHT, 20);
                           return (
-                            <div
+                            <button
+                              type="button"
                               key={appt.id}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setDetailId(appt.id);
                               }}
-                              className={`absolute inset-x-1 overflow-hidden rounded border px-1.5 py-1 cursor-pointer ${STATUS_BLOCK_CLASSES[appt.status]}`}
+                              className={`absolute inset-x-1 overflow-hidden rounded border px-1.5 py-1 text-left cursor-pointer ${STATUS_BLOCK_CLASSES[appt.status]}`}
                               style={{ top, height }}
                             >
                               <p className="truncate text-xs font-medium">{appt.client?.name}</p>
                               {height > 32 && <p className="truncate text-[11px] opacity-80">{appt.service?.name}</p>}
-                            </div>
+                            </button>
                           );
                         })}
                       </>
@@ -170,6 +168,7 @@ export function CalendarPage() {
         )}
       </Card>
 
+      <p className="mt-2 text-xs text-ink-muted md:hidden">Swipe horizontally to view each staff member’s schedule.</p>
       <CreateAppointmentModal open={createPrefill !== null} onClose={() => setCreatePrefill(null)} prefill={createPrefill ?? undefined} />
       <AppointmentDetailModal
         appointmentId={detailId}
@@ -183,6 +182,6 @@ export function CalendarPage() {
         }}
       />
       <RescheduleModal appointment={rescheduleTarget} onClose={() => setRescheduleTarget(null)} />
-    </div>
+    </PageContainer>
   );
 }

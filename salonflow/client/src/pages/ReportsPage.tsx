@@ -11,6 +11,8 @@ import { StatCard } from "@/components/StatCard";
 import { BarList } from "@/components/BarList";
 import { Button } from "@/components/Button";
 import { formatCurrency } from "@/utils/format";
+import { PageContainer } from "@/components/PageContainer";
+import { PageHeader } from "@/components/PageHeader";
 
 type RangeOption = "7d" | "30d" | "90d";
 
@@ -29,20 +31,14 @@ export function ReportsPage() {
   const retention = useClientRetentionReport();
 
   return (
-    <div className="p-4 sm:p-8">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="font-display text-2xl text-ink">Reports</h1>
-          <p className="mt-0.5 text-sm text-ink-muted">Built from real appointment and payment data — never a separate set of numbers.</p>
-        </div>
-        <div className="flex gap-1 rounded-lg border border-line bg-paper-raised p-1">
+    <PageContainer>
+      <PageHeader title="Reports" description="Salon reporting based on real appointments and paid transactions." actions={<div className="flex gap-1 overflow-x-auto rounded-lg border border-line bg-paper-raised p-1">
           {(Object.keys(RANGE_LABELS) as RangeOption[]).map((r) => (
             <Button key={r} size="sm" variant={range === r ? "primary" : "ghost"} onClick={() => setRange(r)}>
               {RANGE_LABELS[r]}
             </Button>
           ))}
-        </div>
-      </div>
+        </div>} />
 
       <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <StatCard label="Collected revenue" value={revenue.data ? formatCurrency(revenue.data.totalRevenue) : "—"} />
@@ -51,7 +47,7 @@ export function ReportsPage() {
         <StatCard label="No-shows" value={outcomes.data?.noShow ?? "—"} />
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-2">
         <Card className="p-5">
           <p className="mb-4 font-display text-lg text-ink">Popular services</p>
           {!popularServices.data || popularServices.data.length === 0 ? (
@@ -87,7 +83,7 @@ export function ReportsPage() {
           {!retention.data ? (
             <p className="text-sm text-ink-muted">Loading…</p>
           ) : (
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <StatBlock label="Total clients" value={retention.data.totalClients} />
               <StatBlock label="Returning (2+ visits)" value={retention.data.returning} />
               <StatBlock label="One-time visitors" value={retention.data.oneTime} />
@@ -96,7 +92,7 @@ export function ReportsPage() {
           )}
         </Card>
       </div>
-    </div>
+    </PageContainer>
   );
 }
 

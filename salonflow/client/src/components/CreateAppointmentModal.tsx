@@ -121,7 +121,7 @@ export function CreateAppointmentModal({ open, onClose, prefill }: CreateAppoint
             </button>
           </div>
           {isNewClient ? (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Input placeholder="Full name" value={newClientName} onChange={(e) => setNewClientName(e.target.value)} required />
               <Input placeholder="Phone (optional)" value={newClientPhone} onChange={(e) => setNewClientPhone(e.target.value)} />
             </div>
@@ -138,7 +138,7 @@ export function CreateAppointmentModal({ open, onClose, prefill }: CreateAppoint
           )}
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="block text-sm font-medium text-ink-soft mb-1.5">Service</label>
             <Select

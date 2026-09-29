@@ -5,6 +5,10 @@ import { Card } from "@/components/Card";
 import { EmptyState } from "@/components/EmptyState";
 import { CreateStaffModal } from "@/components/CreateStaffModal";
 import { StaffDetailModal } from "@/components/StaffDetailModal";
+import { PageContainer } from "@/components/PageContainer";
+import { PageHeader } from "@/components/PageHeader";
+import { Skeleton } from "@/components/Skeleton";
+import { Alert } from "@/components/Alert";
 
 const STATUS_STYLES: Record<string, string> = {
   ACTIVE: "text-success",
@@ -13,35 +17,24 @@ const STATUS_STYLES: Record<string, string> = {
 };
 
 export function StaffPage() {
-  const { data: staff, isLoading } = useStaff();
+  const { data: staff, isLoading, isError } = useStaff();
   const [createOpen, setCreateOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
 
   return (
-    <div className="p-4 sm:p-8">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="font-display text-2xl text-ink">Staff</h1>
-          <p className="mt-0.5 text-sm text-ink-muted">Profiles, skills, schedules, and home-service eligibility.</p>
-        </div>
-        <Button onClick={() => setCreateOpen(true)}>New staff member</Button>
-      </div>
+    <PageContainer><PageHeader title="Staff" description="Operational staff profiles, skills, schedules, and availability." actions={<Button onClick={() => setCreateOpen(true)}>New staff member</Button>} />
 
       <Card className="overflow-hidden">
         {isLoading ? (
-          <div className="space-y-3 p-5">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="h-10 animate-pulse rounded bg-paper-sunken" />
-            ))}
-          </div>
-        ) : !staff || staff.length === 0 ? (
+          <div className="space-y-3 p-5">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-12" />)}</div>
+        ) : isError ? <Alert tone="error" className="m-5">Staff could not be loaded.</Alert>
+        : !staff || staff.length === 0 ? (
           <EmptyState
             title="No staff yet"
             description="Add the salon's first staff member — this is separate from a login account; add one via Settings once that's built."
             action={<Button onClick={() => setCreateOpen(true)}>New staff member</Button>}
           />
-        ) : (
-          <table className="w-full text-sm">
+        ) : (<><div className="divide-y divide-line md:hidden">{staff.map((member) => <button key={member.id} type="button" onClick={() => setDetailId(member.id)} className="w-full px-4 py-4 text-left hover:bg-paper-sunken"><div className="flex justify-between gap-3"><p className="font-medium text-ink">{member.name}</p><span className={`text-xs ${STATUS_STYLES[member.status]}`}>{member.status.charAt(0) + member.status.slice(1).toLowerCase()}</span></div><p className="mt-1 text-sm text-ink-soft">{member.skills.join(", ") || "No skills assigned"}</p></button>)}</div><div className="hidden overflow-x-auto md:block"><table className="w-full text-sm">
             <thead>
               <tr className="border-b border-line text-left text-xs uppercase tracking-wide text-ink-muted">
                 <th className="px-5 py-3 font-medium">Name</th>
@@ -53,8 +46,8 @@ export function StaffPage() {
             </thead>
             <tbody className="divide-y divide-line">
               {staff.map((member) => (
-                <tr key={member.id} onClick={() => setDetailId(member.id)} className="cursor-pointer hover:bg-paper-sunken">
-                  <td className="px-5 py-3 font-medium text-ink">{member.name}</td>
+                <tr key={member.id} className="hover:bg-paper-sunken">
+                  <td className="px-5 py-3"><button type="button" onClick={() => setDetailId(member.id)} className="font-medium text-ink hover:underline">{member.name}</button></td>
                   <td className="px-5 py-3 text-ink-soft">{member.phone ?? "—"}</td>
                   <td className="px-5 py-3 text-ink-soft">{member.skills.join(", ") || "—"}</td>
                   <td className="px-5 py-3 text-ink-soft">{member.homeServiceEligible ? "Yes" : "No"}</td>
@@ -66,12 +59,11 @@ export function StaffPage() {
                 </tr>
               ))}
             </tbody>
-          </table>
-        )}
+          </table></div></>)}
       </Card>
 
       <CreateStaffModal open={createOpen} onClose={() => setCreateOpen(false)} />
       <StaffDetailModal staffId={detailId} onClose={() => setDetailId(null)} />
-    </div>
+    </PageContainer>
   );
 }

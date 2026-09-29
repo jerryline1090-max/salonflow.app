@@ -4,6 +4,10 @@ import { Card } from "@/components/Card";
 import { StatCard } from "@/components/StatCard";
 import { EmptyState } from "@/components/EmptyState";
 import { formatCurrency, formatDateTime, startOfDayIso, endOfDayIso } from "@/utils/format";
+import { PageContainer } from "@/components/PageContainer";
+import { PageHeader } from "@/components/PageHeader";
+import { Skeleton } from "@/components/Skeleton";
+import { Alert } from "@/components/Alert";
 
 const METHOD_LABELS: Record<string, string> = {
   CASH: "Cash",
@@ -21,18 +25,12 @@ const STATUS_STYLES: Record<string, string> = {
 };
 
 export function PaymentsPage() {
-  const { data: payments, isLoading } = usePayments();
+  const { data: payments, isLoading, isError } = usePayments();
 
   const { data: revenue } = useRevenueReport({ period: "current-month" });
 
   return (
-    <div className="p-4 sm:p-8">
-      <div className="mb-6">
-        <h1 className="font-display text-2xl text-ink">Payments</h1>
-        <p className="mt-0.5 text-sm text-ink-muted">
-          Actual transactions — separate from appointments, but linked to them. A pending appointment is never counted as revenue.
-        </p>
-      </div>
+    <PageContainer><PageHeader title="Payments" description="Salon client transactions. This is separate from any future SalonFlow subscription billing." />
 
       <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3">
         <StatCard label="This month's revenue" value={revenue ? formatCurrency(revenue.totalRevenue) : "—"} />
@@ -46,18 +44,14 @@ export function PaymentsPage() {
 
       <Card className="overflow-hidden">
         {isLoading ? (
-          <div className="space-y-3 p-5">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="h-10 animate-pulse rounded bg-paper-sunken" />
-            ))}
-          </div>
-        ) : !payments || payments.length === 0 ? (
+          <div className="space-y-3 p-5">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-12" />)}</div>
+        ) : isError ? <Alert tone="error" className="m-5">Payments could not be loaded.</Alert>
+        : !payments || payments.length === 0 ? (
           <EmptyState
             title="No payments recorded yet"
             description="Payments are recorded from an appointment's detail view once a client has paid."
           />
-        ) : (
-          <table className="w-full text-sm">
+        ) : (<><div className="divide-y divide-line md:hidden">{payments.map((payment) => <div key={payment.id} className="px-4 py-4"><div className="flex justify-between gap-3"><p className="font-medium text-ink">{payment.client?.name ?? "Client"}</p><p className="tabular-nums text-ink">{formatCurrency(payment.amount)}</p></div><p className="mt-1 text-sm text-ink-soft">{METHOD_LABELS[payment.method] ?? payment.method} · {formatDateTime(payment.createdAt)}</p><p className={`mt-1 text-xs ${STATUS_STYLES[payment.status] ?? "text-ink-soft"}`}>{payment.status.charAt(0) + payment.status.slice(1).toLowerCase()}</p></div>)}</div><div className="hidden overflow-x-auto md:block"><table className="w-full text-sm">
             <thead>
               <tr className="border-b border-line text-left text-xs uppercase tracking-wide text-ink-muted">
                 <th className="px-5 py-3 font-medium">Client</th>
@@ -84,9 +78,8 @@ export function PaymentsPage() {
                 </tr>
               ))}
             </tbody>
-          </table>
-        )}
+          </table></div></>)}
       </Card>
-    </div>
+    </PageContainer>
   );
 }

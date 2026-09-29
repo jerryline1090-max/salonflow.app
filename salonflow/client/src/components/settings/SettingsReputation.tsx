@@ -60,7 +60,7 @@ export function SettingsReputation() {
       </label>
 
       {form.reputationEnabled && (
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label className="block text-sm font-medium text-ink-soft mb-1.5">Ask for feedback after (hours)</label>
             <Input
@@ -80,7 +80,7 @@ export function SettingsReputation() {
               onChange={(e) => setForm({ ...form, reputationHappyThreshold: e.target.value })}
             />
           </div>
-          <div className="col-span-2">
+          <div className="sm:col-span-2">
             <label className="block text-sm font-medium text-ink-soft mb-1.5">Google review link</label>
             <Input
               value={form.googleReviewUrl}

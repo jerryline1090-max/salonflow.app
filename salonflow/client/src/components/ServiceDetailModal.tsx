@@ -89,7 +89,7 @@ export function ServiceDetailModal({ serviceId, onClose }: { serviceId: string |
           <label className="block text-sm font-medium text-ink-soft mb-1.5">Category</label>
           <Input value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} />
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="block text-sm font-medium text-ink-soft mb-1.5">Price (₦)</label>
             <Input type="number" min={0} value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} required />

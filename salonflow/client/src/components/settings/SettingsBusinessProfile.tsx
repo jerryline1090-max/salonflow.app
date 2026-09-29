@@ -45,12 +45,12 @@ export function SettingsBusinessProfile() {
         This is what shows up throughout the workspace — your team sees your salon's own name, not a generic app.
       </p>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div className="col-span-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="sm:col-span-2">
           <label className="block text-sm font-medium text-ink-soft mb-1.5">Business name</label>
           <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
         </div>
-        <div className="col-span-2">
+        <div className="sm:col-span-2">
           <label className="block text-sm font-medium text-ink-soft mb-1.5">Description</label>
           <Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
         </div>
@@ -62,7 +62,7 @@ export function SettingsBusinessProfile() {
           <label className="block text-sm font-medium text-ink-soft mb-1.5">Email</label>
           <Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
         </div>
-        <div className="col-span-2">
+        <div className="sm:col-span-2">
           <label className="block text-sm font-medium text-ink-soft mb-1.5">Address</label>
           <Input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
         </div>

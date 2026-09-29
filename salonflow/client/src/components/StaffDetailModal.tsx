@@ -142,7 +142,7 @@ export function StaffDetailModal({ staffId, onClose }: { staffId: string | null;
 
         <div className="border-t border-line pt-4">
           <p className="mb-3 text-sm font-medium text-ink">Profile</p>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Input placeholder="Name" value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} />
             <Input placeholder="Phone" value={profile.phone} onChange={(e) => setProfile({ ...profile, phone: e.target.value })} />
           </div>
