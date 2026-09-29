@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { Skeleton } from "@/components/Skeleton";
 import { Alert } from "@/components/Alert";
 import { PaginationControls } from "@/components/PaginationControls";
+import { ClickableTableRow } from "@/components/ClickableTableRow";
 
 const STATUS_STYLES: Record<string, string> = {
   ACTIVE: "text-success",
@@ -37,7 +38,7 @@ export function StaffPage() {
             description="Add the salon's first staff member — this is separate from a login account; add one via Settings once that's built."
             action={<Button onClick={() => setCreateOpen(true)}>New staff member</Button>}
           />
-        ) : (<><div className="divide-y divide-line md:hidden">{staff.map((member) => <button key={member.id} type="button" onClick={() => setDetailId(member.id)} className="w-full px-4 py-4 text-left hover:bg-paper-sunken"><div className="flex justify-between gap-3"><p className="font-medium text-ink">{member.name}</p><span className={`text-xs ${STATUS_STYLES[member.status]}`}>{member.status.charAt(0) + member.status.slice(1).toLowerCase()}</span></div><p className="mt-1 text-sm text-ink-soft">{member.skills.join(", ") || "No skills assigned"}</p></button>)}</div><div className="hidden overflow-x-auto md:block"><table className="w-full text-sm">
+        ) : (<><div className="divide-y divide-line md:hidden">{staff.map((member) => <button key={member.id} type="button" onClick={() => setDetailId(member.id)} className="w-full px-4 py-4 text-left hover:bg-paper-sunken focus-visible:bg-brass-50"><div className="flex justify-between gap-3"><p className="font-medium text-ink">{member.name}</p><span className={`text-xs ${STATUS_STYLES[member.status]}`}>{member.status.charAt(0) + member.status.slice(1).toLowerCase()}</span></div><p className="mt-1 text-sm text-ink-soft">{member.skills.join(", ") || "No skills assigned"}</p></button>)}</div><div className="hidden overflow-x-auto md:block"><table className="w-full text-sm">
             <thead>
               <tr className="border-b border-line text-left text-xs uppercase tracking-wide text-ink-muted">
                 <th className="px-5 py-3 font-medium">Name</th>
@@ -49,8 +50,8 @@ export function StaffPage() {
             </thead>
             <tbody className="divide-y divide-line">
               {staff.map((member) => (
-                <tr key={member.id} className="hover:bg-paper-sunken">
-                  <td className="px-5 py-3"><button type="button" onClick={() => setDetailId(member.id)} className="font-medium text-ink hover:underline">{member.name}</button></td>
+                <ClickableTableRow key={member.id} label={`View ${member.name}`} onActivate={() => setDetailId(member.id)}>
+                  <td className="px-5 py-3 font-medium text-ink">{member.name}</td>
                   <td className="px-5 py-3 text-ink-soft">{member.phone ?? "—"}</td>
                   <td className="px-5 py-3 text-ink-soft">{member.skills.join(", ") || "—"}</td>
                   <td className="px-5 py-3 text-ink-soft">{member.homeServiceEligible ? "Yes" : "No"}</td>
@@ -59,7 +60,7 @@ export function StaffPage() {
                       {member.status.charAt(0) + member.status.slice(1).toLowerCase()}
                     </span>
                   </td>
-                </tr>
+                </ClickableTableRow>
               ))}
             </tbody>
           </table></div></>)}

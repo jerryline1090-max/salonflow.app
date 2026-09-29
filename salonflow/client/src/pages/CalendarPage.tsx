@@ -143,7 +143,7 @@ export function CalendarPage() {
                                 e.stopPropagation();
                                 setDetailId(appt.id);
                               }}
-                              className={`absolute inset-x-1 overflow-hidden rounded border px-1.5 py-1 text-left cursor-pointer ${STATUS_BLOCK_CLASSES[appt.status]}`}
+                              className={`absolute inset-x-1 overflow-hidden rounded border px-1.5 py-1 text-left cursor-pointer transition-shadow hover:ring-1 hover:ring-brass-500 focus-visible:bg-brass-50 focus-visible:ring-2 focus-visible:ring-brass-500 ${STATUS_BLOCK_CLASSES[appt.status]}`}
                               style={{ top, height }}
                             >
                               <p className="truncate text-xs font-medium">{appt.client?.name}</p>

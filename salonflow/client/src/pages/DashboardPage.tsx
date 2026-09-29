@@ -10,6 +10,7 @@ import { AppointmentRow } from "@/components/AppointmentRow";
 import { Card } from "@/components/Card";
 import { EmptyState } from "@/components/EmptyState";
 import { RescheduleModal } from "@/components/RescheduleModal";
+import { AppointmentDetailModal } from "@/components/AppointmentDetailModal";
 import { PageContainer } from "@/components/PageContainer";
 import { PageHeader } from "@/components/PageHeader";
 import { Skeleton } from "@/components/Skeleton";
@@ -21,6 +22,7 @@ import type { Appointment } from "@/types";
 export function DashboardPage() {
   const { user } = useAuth();
   const [rescheduleTarget, setRescheduleTarget] = useState<Appointment | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
   const today = useAppointments({ from: startOfDayIso(), to: endOfDayIso() });
   const needsAttention = useAppointments({ needsAttention: true });
   const revenue = useRevenueReport({ period: "today" });
@@ -46,7 +48,7 @@ export function DashboardPage() {
     <section className="order-2 mt-6 md:order-3" aria-labelledby="schedule-heading">
       <div className="mb-3"><h2 id="schedule-heading" className="font-display text-lg text-ink">Today’s schedule</h2><p className="mt-0.5 text-sm text-ink-muted">Your pending and confirmed appointments for today.</p></div>
       <Card className="overflow-hidden">
-        {today.isLoading ? <div className="space-y-3 p-5">{[1, 2, 3].map((item) => <Skeleton key={item} className="h-12" />)}</div> : today.isError ? <Alert tone="error" className="m-5">Today’s schedule could not be loaded.</Alert> : upcomingToday.length === 0 ? <EmptyState title="Nothing left on today’s schedule" description="Every appointment for today is either done or hasn’t been booked yet." /> : <ul className="divide-y divide-line">{upcomingToday.map((appointment) => <AppointmentRow key={appointment.id} appointment={appointment} />)}</ul>}
+        {today.isLoading ? <div className="space-y-3 p-5">{[1, 2, 3].map((item) => <Skeleton key={item} className="h-12" />)}</div> : today.isError ? <Alert tone="error" className="m-5">Today’s schedule could not be loaded.</Alert> : upcomingToday.length === 0 ? <EmptyState title="Nothing left on today’s schedule" description="Every appointment for today is either done or hasn’t been booked yet." /> : <ul className="divide-y divide-line">{upcomingToday.map((appointment) => <AppointmentRow key={appointment.id} appointment={appointment} onClick={() => setDetailId(appointment.id)} />)}</ul>}
       </Card>
     </section>
     <section className="order-3 mt-6 md:order-2" aria-labelledby="trend-heading">
@@ -54,5 +56,12 @@ export function DashboardPage() {
     </section>
     </div>
     <RescheduleModal appointment={rescheduleTarget} onClose={() => setRescheduleTarget(null)} />
+    <AppointmentDetailModal appointmentId={detailId} onClose={() => setDetailId(null)} onReschedule={() => {
+      const appointment = todaysAppointments.find((item) => item.id === detailId);
+      if (appointment) {
+        setRescheduleTarget(appointment);
+        setDetailId(null);
+      }
+    }} />
   </PageContainer>;
 }

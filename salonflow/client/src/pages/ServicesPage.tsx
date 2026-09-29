@@ -10,6 +10,7 @@ import { PageContainer } from "@/components/PageContainer";
 import { PageHeader } from "@/components/PageHeader";
 import { Skeleton } from "@/components/Skeleton";
 import { Alert } from "@/components/Alert";
+import { ClickableTableRow } from "@/components/ClickableTableRow";
 
 export function ServicesPage() {
   const { data: services, isLoading, isError } = useServices();
@@ -29,7 +30,7 @@ export function ServicesPage() {
             description="Add the first service the salon offers before booking any appointments."
             action={<Button onClick={() => setCreateOpen(true)}>New service</Button>}
           />
-        ) : (<><div className="divide-y divide-line md:hidden">{services.map((service) => <button key={service.id} type="button" onClick={() => setDetailId(service.id)} className="w-full px-4 py-4 text-left hover:bg-paper-sunken"><div className="flex justify-between gap-3"><p className="font-medium text-ink">{service.name}</p><span className={service.isActive ? "text-xs text-success" : "text-xs text-ink-muted"}>{service.isActive ? "Active" : "Inactive"}</span></div><p className="mt-1 text-sm text-ink-soft">{formatCurrency(service.price)} · {formatDuration(service.durationMinutes)} · {[service.availableAtSalon && "Salon", service.availableAtHome && "Home"].filter(Boolean).join(" · ")}</p></button>)}</div><div className="hidden overflow-x-auto md:block"><table className="w-full text-sm">
+        ) : (<><div className="divide-y divide-line md:hidden">{services.map((service) => <button key={service.id} type="button" onClick={() => setDetailId(service.id)} className="w-full px-4 py-4 text-left hover:bg-paper-sunken focus-visible:bg-brass-50"><div className="flex justify-between gap-3"><p className="font-medium text-ink">{service.name}</p><span className={service.isActive ? "text-xs text-success" : "text-xs text-ink-muted"}>{service.isActive ? "Active" : "Inactive"}</span></div><p className="mt-1 text-sm text-ink-soft">{formatCurrency(service.price)} · {formatDuration(service.durationMinutes)} · {[service.availableAtSalon && "Salon", service.availableAtHome && "Home"].filter(Boolean).join(" · ")}</p></button>)}</div><div className="hidden overflow-x-auto md:block"><table className="w-full text-sm">
             <thead>
               <tr className="border-b border-line text-left text-xs uppercase tracking-wide text-ink-muted">
                 <th className="px-5 py-3 font-medium">Name</th>
@@ -42,8 +43,8 @@ export function ServicesPage() {
             </thead>
             <tbody className="divide-y divide-line">
               {services.map((service) => (
-                <tr key={service.id} className="hover:bg-paper-sunken">
-                  <td className="px-5 py-3"><button type="button" onClick={() => setDetailId(service.id)} className="font-medium text-ink hover:underline">{service.name}</button></td>
+                <ClickableTableRow key={service.id} label={`View ${service.name}`} onActivate={() => setDetailId(service.id)}>
+                  <td className="px-5 py-3 font-medium text-ink">{service.name}</td>
                   <td className="px-5 py-3 text-ink-soft">{service.category ?? "—"}</td>
                   <td className="px-5 py-3 text-ink-soft tabular-nums">{formatCurrency(service.price)}</td>
                   <td className="px-5 py-3 text-ink-soft">{formatDuration(service.durationMinutes)}</td>
@@ -55,7 +56,7 @@ export function ServicesPage() {
                       {service.isActive ? "Active" : "Inactive"}
                     </span>
                   </td>
-                </tr>
+                </ClickableTableRow>
               ))}
             </tbody>
           </table></div></>)}

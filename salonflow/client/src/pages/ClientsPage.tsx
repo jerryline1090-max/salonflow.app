@@ -11,6 +11,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { Skeleton } from "@/components/Skeleton";
 import { Alert } from "@/components/Alert";
 import { PaginationControls } from "@/components/PaginationControls";
+import { ClickableTableRow } from "@/components/ClickableTableRow";
 
 export function ClientsPage() {
   const [page, setPage] = useState(1);
@@ -49,7 +50,7 @@ export function ClientsPage() {
             }
             action={!search ? <Button onClick={() => setCreateOpen(true)}>New client</Button> : undefined}
           />
-        ) : (<><div className="divide-y divide-line md:hidden">{filtered.map((client) => <button key={client.id} type="button" onClick={() => setDetailId(client.id)} className="w-full px-4 py-4 text-left hover:bg-paper-sunken"><p className="font-medium text-ink">{client.name}</p><p className="mt-1 text-sm text-ink-soft">{client.phone ?? client.email ?? "No contact details"}</p></button>)}</div><div className="hidden overflow-x-auto md:block"><table className="w-full text-sm">
+        ) : (<><div className="divide-y divide-line md:hidden">{filtered.map((client) => <button key={client.id} type="button" onClick={() => setDetailId(client.id)} className="w-full px-4 py-4 text-left hover:bg-paper-sunken focus-visible:bg-brass-50"><p className="font-medium text-ink">{client.name}</p><p className="mt-1 text-sm text-ink-soft">{client.phone ?? client.email ?? "No contact details"}</p></button>)}</div><div className="hidden overflow-x-auto md:block"><table className="w-full text-sm">
             <thead>
               <tr className="border-b border-line text-left text-xs uppercase tracking-wide text-ink-muted">
                 <th className="px-5 py-3 font-medium">Name</th>
@@ -59,11 +60,11 @@ export function ClientsPage() {
             </thead>
             <tbody className="divide-y divide-line">
               {filtered.map((client) => (
-                <tr key={client.id} className="hover:bg-paper-sunken">
-                  <td className="px-5 py-3"><button type="button" onClick={() => setDetailId(client.id)} className="font-medium text-ink hover:underline">{client.name}</button></td>
+                <ClickableTableRow key={client.id} label={`View ${client.name}`} onActivate={() => setDetailId(client.id)}>
+                  <td className="px-5 py-3 font-medium text-ink">{client.name}</td>
                   <td className="px-5 py-3 text-ink-soft">{client.phone ?? "—"}</td>
                   <td className="px-5 py-3 text-ink-soft">{client.email ?? "—"}</td>
-                </tr>
+                </ClickableTableRow>
               ))}
             </tbody>
           </table></div></>)}
