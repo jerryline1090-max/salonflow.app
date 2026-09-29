@@ -6,6 +6,7 @@ import { prisma } from "../lib/prisma";
 import { asyncHandler } from "../middleware/asyncHandler";
 import { rethrowIfDatabaseUnavailable } from "../middleware/errorHandler";
 import { summarizeSubscription } from "../modules/subscriptions/subscriptionService";
+import { requireBusinessAccess } from "../middleware/requireBusinessAccess";
 
 export const authRouter = Router();
 
@@ -69,6 +70,10 @@ authRouter.get("/me", authenticate, asyncHandler(async (req, res) => {
     subscription: user.business.subscription ? summarizeSubscription(user.business.subscription) : undefined,
   });
 }));
+
+// /auth/me stays recovery-safe, while authenticated team operations remain
+// operational business access and must not bypass the central commercial gate.
+authRouter.use("/team", authenticate, requireBusinessAccess);
 
 // Section 28: viewing the team is a lighter bar than creating an account —
 // "staff:view" (which MANAGER has by default, unlike "staff:create").

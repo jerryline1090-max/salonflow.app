@@ -7,6 +7,7 @@ import {
   getGracePeriodEndsAt,
   getBusinessSubscription,
   summarizeSubscription,
+  resolveBusinessAccess,
 } from "../subscriptionService";
 import { getPlanDefinition } from "../planConfig";
 
@@ -61,5 +62,22 @@ describe("subscriptionService", () => {
 
     await expect(getBusinessSubscription("biz_1")).resolves.toBeNull();
     expect(prisma.subscription.findUnique).toHaveBeenCalledWith({ where: { businessId: "biz_1" } });
+  });
+
+  it("allows legacy ACTIVE subscriptions without inferring an expiry", () => {
+    const access = resolveBusinessAccess({ id: "sub_legacy", businessId: "biz_1", planCode: "STARTER", status: "ACTIVE", trialEndsAt: null, graceEndsAt: null, currentPeriodEndsAt: null, cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date() });
+    expect(access).toMatchObject({ allowed: true, accessState: "FULL_ACCESS" });
+  });
+
+  it("derives trial expiry into exactly three days of grace before restriction", () => {
+    const trialEndsAt = new Date("2026-10-01T00:00:00.000Z");
+    const subscription = { id: "sub_1", businessId: "biz_1", planCode: "STARTER" as const, status: "TRIALING" as const, trialEndsAt, graceEndsAt: null, currentPeriodEndsAt: null, cancelAtPeriodEnd: false, createdAt: trialEndsAt, updatedAt: trialEndsAt };
+    expect(resolveBusinessAccess(subscription, new Date("2026-10-03T00:00:00.000Z"))).toMatchObject({ allowed: true, effectiveStatus: "GRACE_PERIOD", warning: "GRACE_PERIOD" });
+    expect(resolveBusinessAccess(subscription, new Date("2026-10-04T00:00:00.000Z"))).toMatchObject({ allowed: false, effectiveStatus: "SUSPENDED" });
+  });
+
+  it("does not allow a persisted grace period with no defensible deadline", () => {
+    const access = resolveBusinessAccess({ id: "sub_1", businessId: "biz_1", planCode: "STARTER", status: "GRACE_PERIOD", trialEndsAt: null, graceEndsAt: null, currentPeriodEndsAt: null, cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date() });
+    expect(access).toMatchObject({ allowed: false, accessState: "SUSPENDED" });
   });
 });

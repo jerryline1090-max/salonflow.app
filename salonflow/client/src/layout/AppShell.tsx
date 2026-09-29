@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { AssistantChat } from "@/components/AssistantChat";
+import { SubscriptionBanner } from "@/components/SubscriptionBanner";
 
 export function AppShell({ children }: { children: ReactNode }) {
   const [navigationOpen, setNavigationOpen] = useState(false);
@@ -17,6 +18,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <Sidebar mobileOpen={navigationOpen} onNavigate={() => setNavigationOpen(false)} />
       <div className="flex flex-1 flex-col overflow-hidden">
         <Topbar navigationOpen={navigationOpen} onMenuClick={() => setNavigationOpen(true)} />
+        <SubscriptionBanner />
         <main className="min-w-0 flex-1 overflow-y-auto overflow-x-auto scrollbar-thin">{children}</main>
       </div>
       <AssistantChat />

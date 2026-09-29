@@ -31,6 +31,8 @@ import { asyncHandler, protectRouterAsyncHandlers } from "./middleware/asyncHand
 import { errorHandler } from "./middleware/errorHandler";
 import { healthRouter } from "./routes/health.routes";
 import { requestTiming } from "./middleware/requestTiming";
+import { requireBusinessAccess } from "./middleware/requireBusinessAccess";
+import { subscriptionRouter } from "./routes/subscription.routes";
 
 protectRouterAsyncHandlers(
   authRouter,
@@ -51,6 +53,7 @@ protectRouterAsyncHandlers(
   reputationRouter,
   notificationsRouter,
   onboardingRouter,
+  subscriptionRouter,
   healthRouter,
 );
 
@@ -109,6 +112,11 @@ app.use("/api/auth", authRouter);
 // ── Everything mounted after this line requires a valid JWT.
 app.use("/api", authenticate);
 
+// Recovery/onboarding exceptions remain authenticated and narrowly scoped.
+app.use("/api/subscription", subscriptionRouter);
+app.use("/api/onboarding", onboardingRouter);
+app.use("/api", requireBusinessAccess);
+
 app.use("/api/appointments", appointmentsRouter);
 app.use("/api/staff", staffRouter);
 app.use("/api/clients", clientsRouter);
@@ -122,7 +130,6 @@ app.use("/api/assistant", assistantRouter);
 app.use("/api/integrations", integrationsRouter);
 app.use("/api/reputation", reputationRouter);
 app.use("/api/notifications", notificationsRouter);
-app.use("/api/onboarding", onboardingRouter);
 
 // ── Internal/system endpoints: no human actor, gated by a shared secret
 //    instead of a user JWT. Run this on a schedule (cron/worker), not from

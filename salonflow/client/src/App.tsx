@@ -16,6 +16,7 @@ import { SettingsPage } from "@/pages/SettingsPage";
 import { NotificationsPage } from "@/pages/NotificationsPage";
 import { requiresOnboarding } from "@/onboardingRouting";
 import { Button } from "@/components/Button";
+import { SubscriptionRecoveryPage } from "@/pages/SubscriptionRecoveryPage";
 
 function LoginRoute() {
   const { user, loading } = useAuth();
@@ -50,6 +51,7 @@ function AuthBootstrapGate() {
           <Route path="/login" element={<LoginRoute />} />
           <Route path="/register" element={<RegisterRoute />} />
           <Route path="/onboarding" element={<OnboardingRoute />} />
+          <Route path="/settings/billing" element={<BillingRecoveryRoute />} />
           <Route
             path="/"
             element={
@@ -156,5 +158,15 @@ function OnboardingAppRoute({ children }: { children: React.ReactNode }) {
   if (loading) return null;
   if (!user) return <Navigate to="/login" replace />;
   if (requiresOnboarding(user)) return <Navigate to="/onboarding" replace />;
+  if (!user.subscription?.accessAllowed) return <SubscriptionRecoveryPage />;
   return <ProtectedRoute>{children}</ProtectedRoute>;
+}
+
+function BillingRecoveryRoute() {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  if (!user) return <Navigate to="/login" replace />;
+  if (requiresOnboarding(user)) return <Navigate to="/onboarding" replace />;
+  if (user.subscription?.accessAllowed) return <Navigate to="/settings" replace />;
+  return <SubscriptionRecoveryPage />;
 }

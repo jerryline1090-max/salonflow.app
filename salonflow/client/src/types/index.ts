@@ -22,8 +22,16 @@ export interface User {
     currentPeriodEndsAt: string | null;
     cancelAtPeriodEnd: boolean;
     accessState: SubscriptionAccessState;
+    accessAllowed: boolean;
+    warning: "PAST_DUE" | "GRACE_PERIOD" | "TRIAL_ENDING" | null;
     trialDaysRemaining: number | null;
   };
+}
+
+export interface SubscriptionDetails extends NonNullable<User["subscription"]> {
+  displayName?: string;
+  currency?: "NGN";
+  monthlyPriceMinor?: number;
 }
 
 export interface BusinessHoursEntry {

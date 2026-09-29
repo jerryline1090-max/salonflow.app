@@ -1,6 +1,8 @@
 jest.mock("../../lib/prisma");
 jest.mock("../../modules/auth/authService");
 jest.mock("../../modules/subscriptions/subscriptionService", () => ({
+  getBusinessSubscription: jest.fn().mockResolvedValue({ id: "sub_1" }),
+  resolveBusinessAccess: jest.fn(() => ({ allowed: true, accessState: "FULL_ACCESS" })),
   summarizeSubscription: jest.fn((subscription) => ({
     planCode: subscription.planCode,
     status: subscription.status,

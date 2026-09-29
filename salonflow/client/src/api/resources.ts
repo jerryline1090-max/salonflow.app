@@ -24,6 +24,7 @@ import type {
   StaffStatusChangeResult,
   TeamMember,
   User,
+  SubscriptionDetails,
   PaginatedResult,
 } from "@/types";
 
@@ -32,6 +33,10 @@ export const authApi = {
   register: (input: { businessName: string; ownerName: string; email: string; password: string; phone: string }) =>
     api.post<{ token: string; user: User; business: Business }>("/auth/register", input),
   me: () => api.get<User>("/auth/me"),
+};
+
+export const subscriptionApi = {
+  get: () => api.get<SubscriptionDetails>("/subscription"),
 };
 
 export interface OnboardingState { onboardingStatus: "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED"; onboardingStep: "BUSINESS_DETAILS" | "SERVICES" | "BUSINESS_HOURS" | "TEAM" | "INTEGRATIONS" | "REVIEW" | null; onboardingCompletedAt?: string | null; }
