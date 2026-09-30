@@ -1,0 +1,8 @@
+import { evaluateSubscriptionLifecycle } from "../lifecycleService";
+
+const base: any = { id: "sub", businessId: "biz", planCode: "STARTER", provider: null, providerCustomerId: null, providerSubscriptionId: null, providerPlanCode: null, trialEndsAt: null, graceEndsAt: null, pastDueEndsAt: null, currentPeriodEndsAt: null, cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date() };
+describe("subscription lifecycle evaluator", () => {
+  it("moves trial to exactly three days of grace at expiry", () => { const trialEndsAt = new Date("2026-10-01T00:00:00Z"); expect(evaluateSubscriptionLifecycle({ ...base, status: "TRIALING", trialEndsAt }, trialEndsAt)).toEqual({ status: "GRACE_PERIOD", graceEndsAt: new Date("2026-10-04T00:00:00Z") }); });
+  it("does not transition before deadlines and suspends at grace/past-due deadlines", () => { const grace = new Date("2026-10-04"); expect(evaluateSubscriptionLifecycle({ ...base, status: "GRACE_PERIOD", graceEndsAt: grace }, new Date("2026-10-03"))).toBeNull(); expect(evaluateSubscriptionLifecycle({ ...base, status: "GRACE_PERIOD", graceEndsAt: grace }, grace)).toEqual({ status: "SUSPENDED" }); const due = new Date("2026-10-05"); expect(evaluateSubscriptionLifecycle({ ...base, status: "PAST_DUE", pastDueEndsAt: due }, due)).toEqual({ status: "SUSPENDED" }); });
+  it("finalizes cancellation only with a known elapsed period", () => { expect(evaluateSubscriptionLifecycle({ ...base, status: "ACTIVE", cancelAtPeriodEnd: true, currentPeriodEndsAt: null }, new Date())).toBeNull(); expect(evaluateSubscriptionLifecycle({ ...base, status: "ACTIVE", cancelAtPeriodEnd: true, currentPeriodEndsAt: new Date("2020-01-01") }, new Date())).toEqual({ status: "CANCELLED" }); });
+});

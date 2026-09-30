@@ -37,19 +37,20 @@ describe("persistent Paystack webhook correlation", () => {
   });
 
   it("activates a recurring charge through providerSubscriptionId without checkout reference", async () => {
-    const paidSubscription = { ...subscription, status: "PAST_DUE", providerSubscriptionId: "sub_code" };
+    const paidSubscription = { ...subscription, status: "PAST_DUE", pastDueEndsAt: new Date("2026-10-01"), providerSubscriptionId: "sub_code" };
     setup({ recurringSubscription: paidSubscription });
     await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "charge.success", providerEventId: "charge.success:txn_1", providerSubscriptionId: "sub_code", providerCustomerId: "customer_code", providerPlanCode: "PLN_GROWTH", amount: 1_500_000, currency: "NGN", currentPeriodEndsAt: new Date("2026-11-01") })).resolves.toMatchObject({ handled: true });
     expect(prisma.subscription.findFirst).toHaveBeenCalledWith({ where: { provider: "PAYSTACK", providerSubscriptionId: "sub_code" } });
     expect(prisma.billingInvoice.upsert).toHaveBeenCalledTimes(1);
-    expect(prisma.subscription.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "sub_1" }, data: expect.objectContaining({ status: "ACTIVE" }) }));
+    expect(prisma.subscription.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "sub_1" }, data: expect.objectContaining({ status: "ACTIVE", pastDueEndsAt: null }) }));
   });
 
   it("moves a recurring provider-matched payment failure to PAST_DUE without suspension", async () => {
     const activeSubscription = { ...subscription, status: "ACTIVE", providerSubscriptionId: "sub_code" };
     setup({ recurringSubscription: activeSubscription });
-    await processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "invoice.payment_failed", providerEventId: "invoice.payment_failed:inv_1", providerSubscriptionId: "sub_code", amount: 1_500_000, currency: "NGN" });
-    expect(prisma.subscription.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "PAST_DUE" }) }));
+    const failureAt = new Date("2026-10-01T00:00:00.000Z");
+    await processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "invoice.payment_failed", providerEventId: "invoice.payment_failed:inv_1", providerSubscriptionId: "sub_code", amount: 1_500_000, currency: "NGN", occurredAt: failureAt });
+    expect(prisma.subscription.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "PAST_DUE", pastDueEndsAt: new Date("2026-10-04T00:00:00.000Z") }) }));
     expect(JSON.stringify((prisma.subscription.update as jest.Mock).mock.calls)).not.toContain("SUSPENDED");
   });
 

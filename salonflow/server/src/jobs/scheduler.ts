@@ -2,6 +2,7 @@ import cron, { ScheduledTask } from "node-cron";
 import { scanForAppointmentsNeedingAttention } from "../modules/appointments/attentionScanner";
 import { queuePendingReputationRequests, sendPendingReputationRequests } from "../modules/reputation/reputationService";
 import { mediaStore } from "../modules/ai/orchestratorFactory";
+import { processCommercialLifecycle } from "../modules/subscriptions/lifecycleProcessor";
 
 /**
  * Every scheduled piece built in earlier phases (the attention scanner,
@@ -32,7 +33,7 @@ interface ScheduledJob {
 }
 
 function buildJobs(): ScheduledJob[] {
-  return [
+  const jobs: ScheduledJob[] = [
     {
       name: "attention-scanner",
       // Hourly by default - section 7: flags stale pending/confirmed
@@ -62,6 +63,8 @@ function buildJobs(): ScheduledJob[] {
       run: () => mediaStore.purgeExpired(),
     },
   ];
+  if (process.env.ENABLE_COMMERCIAL_LIFECYCLE_JOBS === "true") jobs.push({ name: "commercial-lifecycle", schedule: process.env.CRON_COMMERCIAL_LIFECYCLE ?? "0 * * * *", run: () => processCommercialLifecycle() });
+  return jobs;
 }
 
 const runningJobs = new Set<string>();

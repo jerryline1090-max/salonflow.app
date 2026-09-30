@@ -309,6 +309,7 @@ model Business {
   billingInvoices  BillingInvoice[]
   billingEvents    BillingEvent[]
   billingCheckouts BillingCheckout[]
+  lifecycleEvents  SubscriptionLifecycleEvent[]
   notifications    Notification[]
   integrations     Integration[]
   workingHours     BusinessHours[]
@@ -334,6 +335,7 @@ model Subscription {
   providerPlanCode    String?
   trialEndsAt         DateTime?
   graceEndsAt         DateTime?
+  pastDueEndsAt       DateTime?
   currentPeriodEndsAt DateTime?
   cancelAtPeriodEnd   Boolean            @default(false)
   createdAt           DateTime           @default(now())
@@ -341,10 +343,27 @@ model Subscription {
 
   billingInvoices     BillingInvoice[]
   billingCheckouts    BillingCheckout[]
+  lifecycleEvents     SubscriptionLifecycleEvent[]
 
   @@index([status])
   @@index([provider, providerCustomerId])
   @@index([provider, providerSubscriptionId])
+  @@index([status, trialEndsAt])
+  @@index([status, graceEndsAt])
+  @@index([status, pastDueEndsAt])
+  @@index([cancelAtPeriodEnd, currentPeriodEndsAt])
+}
+
+model SubscriptionLifecycleEvent {
+  id             String   @id @default(cuid())
+  subscriptionId String
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  businessId     String
+  business       Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  eventKey       String
+  createdAt      DateTime @default(now())
+  @@unique([subscriptionId, eventKey])
+  @@index([businessId, createdAt])
 }
 
 // Server-created checkout correlations. Provider metadata is helpful but is

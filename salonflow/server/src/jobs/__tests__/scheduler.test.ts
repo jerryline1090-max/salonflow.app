@@ -35,6 +35,17 @@ describe("buildJobs", () => {
     );
   });
 
+  it.each([undefined, "false"])("does not include the commercial lifecycle job when disabled (%s)", (value) => {
+    if (value === undefined) delete process.env.ENABLE_COMMERCIAL_LIFECYCLE_JOBS; else process.env.ENABLE_COMMERCIAL_LIFECYCLE_JOBS = value;
+    expect(buildJobs().map((job) => job.name)).not.toContain("commercial-lifecycle");
+  });
+
+  it("includes one commercial lifecycle job only when explicitly enabled", () => {
+    process.env.ENABLE_COMMERCIAL_LIFECYCLE_JOBS = "true";
+    expect(buildJobs().filter((job) => job.name === "commercial-lifecycle")).toHaveLength(1);
+    delete process.env.ENABLE_COMMERCIAL_LIFECYCLE_JOBS;
+  });
+
   it("each job actually calls the real underlying function", async () => {
     (scanForAppointmentsNeedingAttention as jest.Mock).mockResolvedValue({ flaggedCount: 0 });
     (queuePendingReputationRequests as jest.Mock).mockResolvedValue({ queued: 0 });

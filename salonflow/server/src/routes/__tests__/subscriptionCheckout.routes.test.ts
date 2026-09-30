@@ -24,6 +24,9 @@ describe("POST /api/subscription/checkout", () => {
     expect(response.status).toBe(201);
     expect(initializeBusinessCheckout).toHaveBeenCalledWith(expect.objectContaining({ businessId: "business_1", actorUserId: "owner_1", planCode: "GROWTH" }));
     expect(initializeBusinessCheckout).not.toHaveBeenCalledWith(expect.objectContaining({ amount: expect.anything() }));
+    const input = (initializeBusinessCheckout as jest.Mock).mock.calls[0][0];
+    expect(input).not.toHaveProperty("status");
+    expect(input).not.toHaveProperty("pastDueEndsAt");
   });
 
   it("rejects non-OWNER users before checkout initialization", async () => {
