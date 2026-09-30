@@ -1,4 +1,7 @@
-jest.mock("../../modules/billing/billingService", () => ({ initializeBusinessCheckout: jest.fn(), getBillingHistory: jest.fn(), scheduleCancellation: jest.fn(), undoScheduledCancellation: jest.fn() }));
+jest.mock("../../modules/billing/billingService", () => {
+  class BillingCorrelationError extends Error {}
+  return { BillingCorrelationError, initializeBusinessCheckout: jest.fn(), getBillingHistory: jest.fn(), scheduleCancellation: jest.fn(), undoScheduledCancellation: jest.fn() };
+});
 jest.mock("../../modules/billing/paystack/paystackProviderFactory", () => ({ createPaystackProvider: jest.fn(() => ({ getPlanCode: jest.fn() })) }));
 jest.mock("../../modules/subscriptions/subscriptionService", () => ({ getBusinessSubscription: jest.fn(), resolveBusinessAccess: jest.fn(), summarizeSubscription: jest.fn() }));
 
@@ -6,7 +9,7 @@ import express from "express";
 import request from "supertest";
 import { signToken } from "../../core/auth";
 import { errorHandler } from "../../middleware/errorHandler";
-import { getBillingHistory, initializeBusinessCheckout } from "../../modules/billing/billingService";
+import { BillingCorrelationError, getBillingHistory, initializeBusinessCheckout } from "../../modules/billing/billingService";
 import { subscriptionRouter } from "../subscription.routes";
 
 function app() { const instance = express(); instance.use(express.json()); instance.use("/api/subscription", require("../../middleware/authenticate").authenticate, subscriptionRouter); instance.use(errorHandler); return instance; }
@@ -39,6 +42,13 @@ describe("POST /api/subscription/checkout", () => {
     const response = await request(app()).post("/api/subscription/checkout").set("Authorization", `Bearer ${owner}`).send({ planCode: "FREE" });
     expect(response.status).toBe(400);
     expect(initializeBusinessCheckout).not.toHaveBeenCalled();
+  });
+
+  it("returns a factual conflict message when an existing provider subscription blocks a new recurring checkout", async () => {
+    (initializeBusinessCheckout as jest.Mock).mockRejectedValue(new BillingCorrelationError("Existing recurring billing requires reconciliation before a replacement checkout can be started"));
+    const response = await request(app()).post("/api/subscription/checkout").set("Authorization", `Bearer ${owner}`).send({ planCode: "STARTER" });
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual({ error: "Existing recurring billing requires reconciliation before a replacement checkout can be started" });
   });
 
   it.each(["PAST_DUE", "SUSPENDED"])("allows the OWNER to initialize %s recovery without changing status", async () => {

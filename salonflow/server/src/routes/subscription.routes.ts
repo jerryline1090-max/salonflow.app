@@ -2,7 +2,7 @@ import { Router } from "express";
 import { getPlanDefinition } from "../modules/subscriptions/planConfig";
 import { getBusinessSubscription, resolveBusinessAccess, summarizeSubscription } from "../modules/subscriptions/subscriptionService";
 import { PlanCode } from "@prisma/client";
-import { getBillingHistory, initializeBusinessCheckout, scheduleCancellation, undoScheduledCancellation } from "../modules/billing/billingService";
+import { BillingCorrelationError, getBillingHistory, initializeBusinessCheckout, scheduleCancellation, undoScheduledCancellation } from "../modules/billing/billingService";
 import { createPaystackProvider } from "../modules/billing/paystack/paystackProviderFactory";
 
 export const subscriptionRouter = Router();
@@ -63,6 +63,9 @@ subscriptionRouter.post("/checkout", async (req, res, next) => {
     });
     res.status(201).json(checkout);
   } catch (error) {
+    if (error instanceof BillingCorrelationError) {
+      return res.status(409).json({ error: error.message });
+    }
     next(error);
   }
 });

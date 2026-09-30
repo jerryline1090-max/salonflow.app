@@ -1,7 +1,7 @@
 jest.mock("../../../lib/prisma");
 
 import { prisma } from "../../../lib/prisma";
-import { processVerifiedPaystackEvent } from "../billingService";
+import { initializeBusinessCheckout, processVerifiedPaystackEvent } from "../billingService";
 
 const subscription = { id: "sub_1", businessId: "biz_1", planCode: "GROWTH", status: "TRIALING", provider: "PAYSTACK", providerCustomerId: null, providerSubscriptionId: null, providerPlanCode: "PLN_GROWTH", trialEndsAt: null, graceEndsAt: null, currentPeriodEndsAt: null, cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date() };
 const checkout = { id: "checkout_1", businessId: "biz_1", subscriptionId: "sub_1", provider: "PAYSTACK", reference: "sf_initial", planCode: "GROWTH", providerPlanCode: "PLN_GROWTH", amount: 1_500_000, currency: "NGN", status: "INITIALIZED", subscription };
@@ -37,6 +37,44 @@ describe("persistent Paystack webhook correlation", () => {
     setup({ existingEvent: { id: "event_existing" } });
     await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "subscription.create", providerEventId: "subscription.create:sub_code", providerReference: "sf_initial" })).resolves.toMatchObject({ duplicate: true });
     expect(prisma.subscription.update).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite an authoritative provider subscription when a different trusted checkout event arrives", async () => {
+    const authoritative = { ...subscription, providerSubscriptionId: "sub_authoritative" };
+    setup({ initialCheckout: { ...checkout, subscription: authoritative } });
+
+    await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "subscription.create", providerEventId: "subscription.create:sub_replacement", providerReference: "sf_initial", providerSubscriptionId: "sub_replacement" })).resolves.toEqual({ handled: false, reason: "provider_identity_conflict" });
+
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+    expect(prisma.billingInvoice.upsert).not.toHaveBeenCalled();
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: "provider_subscription_identity_conflict", previousValue: expect.stringContaining("sub_authoritative"), newValue: expect.stringContaining("sub_replacement") }) }));
+    expect(prisma.billingEvent.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED", failureCode: "PROVIDER_SUBSCRIPTION_CONFLICT" }) }));
+  });
+
+  it("rejects a conflicting plan-based charge without invoicing, activating, or rewarding", async () => {
+    const authoritative = { ...subscription, status: "PAST_DUE", providerSubscriptionId: "sub_authoritative" };
+    setup({ initialCheckout: { ...checkout, subscription: authoritative } });
+
+    await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "charge.success", providerEventId: "charge.success:replacement", providerReference: "sf_initial", providerSubscriptionId: "sub_replacement", amount: 1_500_000, currency: "NGN" })).resolves.toEqual({ handled: false, reason: "provider_identity_conflict" });
+
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+    expect(prisma.billingInvoice.upsert).not.toHaveBeenCalled();
+    expect(prisma.billingCreditEntry.create).not.toHaveBeenCalled();
+    expect(prisma.billingEvent.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED", failureCode: "PROVIDER_SUBSCRIPTION_CONFLICT" }) }));
+  });
+
+  it("treats a replayed persisted provider-identity conflict as a no-op", async () => {
+    setup({ existingEvent: { id: "event_conflict", status: "FAILED", failureCode: "PROVIDER_SUBSCRIPTION_CONFLICT" } });
+    await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "subscription.create", providerEventId: "subscription.create:sub_replacement", providerReference: "sf_initial", providerSubscriptionId: "sub_replacement" })).resolves.toEqual({ handled: true, duplicate: true });
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("does not let an unmatched replacement event mutate any tenant identity", async () => {
+    setup();
+    await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "subscription.create", providerEventId: "subscription.create:unknown", providerReference: "unknown_checkout", providerSubscriptionId: "sub_other" })).resolves.toEqual({ handled: false, reason: "correlation" });
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+    expect(prisma.subscription.findFirst).toHaveBeenCalledWith({ where: { provider: "PAYSTACK", providerSubscriptionId: "sub_other" } });
   });
 
   it("activates a recurring charge through providerSubscriptionId without checkout reference", async () => {
@@ -82,5 +120,37 @@ describe("persistent Paystack webhook correlation", () => {
     expect(prisma.subscription.update).not.toHaveBeenCalled();
     expect(prisma.billingInvoice.upsert).not.toHaveBeenCalled();
     expect(prisma.auditLog.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("plan-based checkout safety", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("refuses a replacement checkout while a provider subscription remains authoritative", async () => {
+    (prisma.business.findUnique as jest.Mock).mockResolvedValue({
+      id: "biz_1",
+      subscription: { id: "sub_1", providerSubscriptionId: "sub_authoritative" },
+      users: [{ email: "owner@example.test" }],
+    });
+    const provider = { getPlanCode: jest.fn(() => "PLN_GROWTH"), initializeCheckout: jest.fn() } as any;
+
+    await expect(initializeBusinessCheckout({ businessId: "biz_1", actorUserId: "owner_1", planCode: "GROWTH", provider })).rejects.toThrow(/reconciliation/i);
+    expect(prisma.billingCheckout.create).not.toHaveBeenCalled();
+    expect(provider.initializeCheckout).not.toHaveBeenCalled();
+  });
+
+  it("still initializes a legitimate first checkout when no provider subscription exists", async () => {
+    (prisma.business.findUnique as jest.Mock).mockResolvedValue({
+      id: "biz_1",
+      subscription: { id: "sub_1", providerSubscriptionId: null },
+      users: [{ email: "owner@example.test" }],
+    });
+    (prisma.billingCheckout.create as jest.Mock).mockResolvedValue({ id: "checkout_1", reference: "sf_reference" });
+    (prisma.auditLog.create as jest.Mock).mockResolvedValue({});
+    const provider = { getPlanCode: jest.fn(() => "PLN_GROWTH"), initializeCheckout: jest.fn().mockResolvedValue({ authorizationUrl: "https://checkout.test", accessCode: "access", providerReference: "sf_reference" }) } as any;
+
+    await expect(initializeBusinessCheckout({ businessId: "biz_1", actorUserId: "owner_1", planCode: "GROWTH", provider })).resolves.toEqual({ authorizationUrl: "https://checkout.test", accessCode: "access", reference: "sf_reference" });
+    expect(prisma.billingCheckout.create).toHaveBeenCalledTimes(1);
+    expect(provider.initializeCheckout).toHaveBeenCalledTimes(1);
   });
 });

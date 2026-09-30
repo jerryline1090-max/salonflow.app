@@ -8,6 +8,14 @@ import { rewardReferralForVerifiedPayment } from "../referrals/referralService";
 
 export class BillingCorrelationError extends Error {}
 
+function hasProviderSubscriptionConflict(subscription: { providerSubscriptionId?: string | null }, event: NormalizedBillingEvent) {
+  return Boolean(
+    subscription.providerSubscriptionId
+      && event.providerSubscriptionId
+      && subscription.providerSubscriptionId !== event.providerSubscriptionId,
+  );
+}
+
 export async function initializeBusinessCheckout(input: {
   businessId: string;
   actorUserId: string;
@@ -19,6 +27,12 @@ export async function initializeBusinessCheckout(input: {
     include: { subscription: true, users: { where: { id: input.actorUserId, role: "OWNER", isActive: true }, select: { email: true } } },
   });
   if (!business?.subscription || !business.users[0]?.email) throw new BillingCorrelationError("Billing checkout is unavailable");
+  // A plan-based Paystack checkout creates a recurring provider subscription.
+  // Never start one while another provider subscription is authoritative: that
+  // could leave both schedules eligible to debit the same SalonFlow business.
+  if (business.subscription.providerSubscriptionId) {
+    throw new BillingCorrelationError("Existing recurring billing requires reconciliation before a replacement checkout can be started");
+  }
 
   const plan = getPlanDefinition(input.planCode);
   const providerPlanCode = input.provider.getPlanCode?.(input.planCode);
@@ -128,6 +142,25 @@ export async function processVerifiedPaystackEvent(event: NormalizedBillingEvent
       const duplicate = await tx.billingEvent.findUnique({ where: { provider_providerEventId: { provider: BillingProvider.PAYSTACK, providerEventId: event.providerEventId } } });
       if (duplicate) return { handled: true, duplicate: true };
       const billingEvent = await tx.billingEvent.create({ data: { provider: BillingProvider.PAYSTACK, providerEventId: event.providerEventId, eventType: event.eventType, businessId, status: BillingEventStatus.RECEIVED } });
+      if (hasProviderSubscriptionConflict(subscription, event)) {
+        // A server-created checkout can correlate an incoming event, but it is
+        // not proof that a second provider subscription safely replaced the
+        // existing one. Preserve the first authoritative identity and route
+        // the discrepancy to reconciliation instead of guessing.
+        await tx.auditLog.create({
+          data: {
+            businessId,
+            actorType: "SYSTEM",
+            resource: "billing",
+            resourceId: subscription.id,
+            action: "provider_subscription_identity_conflict",
+            previousValue: JSON.stringify({ providerSubscriptionId: subscription.providerSubscriptionId }),
+            newValue: JSON.stringify({ providerSubscriptionId: event.providerSubscriptionId, eventType: event.eventType }),
+          },
+        });
+        await tx.billingEvent.update({ where: { id: billingEvent.id }, data: { status: BillingEventStatus.FAILED, failureCode: "PROVIDER_SUBSCRIPTION_CONFLICT", processedAt: new Date() } });
+        return { handled: false, reason: "provider_identity_conflict" as const };
+      }
       const occurredAt = event.occurredAt ?? new Date();
       if (event.eventType === "subscription.create") {
         // Identity only: verified creation is not proof of a paid charge.
