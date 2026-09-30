@@ -2,7 +2,7 @@ import { Router } from "express";
 import { getPlanDefinition } from "../modules/subscriptions/planConfig";
 import { getBusinessSubscription, resolveBusinessAccess, summarizeSubscription } from "../modules/subscriptions/subscriptionService";
 import { PlanCode } from "@prisma/client";
-import { initializeBusinessCheckout } from "../modules/billing/billingService";
+import { getBillingHistory, initializeBusinessCheckout, scheduleCancellation, undoScheduledCancellation } from "../modules/billing/billingService";
 import { createPaystackProvider } from "../modules/billing/paystack/paystackProviderFactory";
 
 export const subscriptionRouter = Router();
@@ -23,6 +23,29 @@ subscriptionRouter.get("/", async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+subscriptionRouter.get("/history", async (req, res, next) => {
+  try {
+    if (req.actor!.role !== "OWNER") return res.status(403).json({ error: "Billing history is available to the business owner only" });
+    res.json(await getBillingHistory(req.actor!.businessId!));
+  } catch (error) { next(error); }
+});
+
+subscriptionRouter.post("/cancel", async (req, res, next) => {
+  try {
+    if (req.actor!.role !== "OWNER") return res.status(403).json({ error: "Only the business owner can manage cancellation" });
+    const subscription = await scheduleCancellation(req.actor!.businessId!, req.actor!.userId);
+    res.json({ cancelAtPeriodEnd: subscription.cancelAtPeriodEnd, currentPeriodEndsAt: subscription.currentPeriodEndsAt });
+  } catch (error) { next(error); }
+});
+
+subscriptionRouter.post("/cancel/undo", async (req, res, next) => {
+  try {
+    if (req.actor!.role !== "OWNER") return res.status(403).json({ error: "Only the business owner can manage cancellation" });
+    const subscription = await undoScheduledCancellation(req.actor!.businessId!, req.actor!.userId);
+    res.json({ cancelAtPeriodEnd: subscription?.cancelAtPeriodEnd ?? false, currentPeriodEndsAt: subscription?.currentPeriodEndsAt ?? null });
+  } catch (error) { next(error); }
 });
 
 // Billing recovery remains available to an authenticated OWNER even when the

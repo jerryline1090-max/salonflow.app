@@ -3,6 +3,10 @@ import { PaystackAdapter, PaystackHttpClient } from "./paystackAdapter";
 import { getPaystackConfig } from "./paystackConfig";
 
 class FetchPaystackHttpClient implements PaystackHttpClient {
+  async get(path: string, options: { authorization: string; timeoutMs: number }) {
+    const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+    try { const response = await fetch(`https://api.paystack.co${path}`, { headers: { Authorization: options.authorization }, signal: controller.signal }); if (!response.ok) throw new BillingProviderError("REJECTED", "Paystack rejected the subscription lookup"); return await response.json() as { status: boolean; data?: Record<string, unknown> }; } finally { clearTimeout(timeout); }
+  }
   async post(path: string, body: Record<string, string>, options: { authorization: string; timeoutMs: number }) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), options.timeoutMs);

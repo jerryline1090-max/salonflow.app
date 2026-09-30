@@ -49,6 +49,14 @@ export interface NormalizedBillingEvent {
   currentPeriodEndsAt?: Date;
 }
 
+export interface ProviderSubscriptionState {
+  providerSubscriptionId: string;
+  providerCustomerId?: string;
+  providerPlanCode?: string;
+  currentPeriodEndsAt?: Date;
+  status?: "ACTIVE" | "CANCELLED" | "PAST_DUE";
+}
+
 /**
  * Provider boundary. Checkout, signature verification, webhook normalization,
  * and future subscription operations stay outside core subscription services.
@@ -57,6 +65,7 @@ export interface BillingProviderAdapter {
   initializeCheckout(input: InitializeCheckoutInput): Promise<InitializeCheckoutResult>;
   verifyWebhookSignature(rawBody: Buffer, signature?: string): boolean;
   normalizeWebhookEvent(payload: unknown): NormalizedBillingEvent | null;
+  getSubscriptionState?(providerSubscriptionId: string): Promise<ProviderSubscriptionState | null>;
   cancelSubscription?(providerSubscriptionId: string): Promise<void>;
   getPlanCode?(planCode: PlanCode): string;
 }

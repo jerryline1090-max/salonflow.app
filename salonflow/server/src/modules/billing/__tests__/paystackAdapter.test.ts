@@ -79,4 +79,16 @@ describe("Paystack provider foundation", () => {
       data: { id: 42, reference: "billing-reference-3", paid_at: "2026-09-29T00:00:00.000Z" },
     })).toMatchObject({ provider: "PAYSTACK", providerEventId: "charge.success:42", eventType: "charge.success" });
   });
+
+  it("reads and normalizes only a matching provider subscription through the mockable HTTP boundary", async () => {
+    const get = jest.fn().mockResolvedValue({ status: true, data: { subscription_code: "sub_code", status: "active", customer: { id: "cust" }, plan: { plan_code: "plan" }, next_payment_date: "2026-11-01T00:00:00.000Z" } });
+    const adapter = new PaystackAdapter(getPaystackConfig(testEnvironment), { post: jest.fn(), get });
+    await expect(adapter.getSubscriptionState("sub_code")).resolves.toMatchObject({ providerSubscriptionId: "sub_code", providerCustomerId: "cust", providerPlanCode: "plan", status: "ACTIVE" });
+    expect(get).toHaveBeenCalledWith("/subscription/sub_code", expect.objectContaining({ timeoutMs: 10_000 }));
+  });
+
+  it("rejects malformed provider subscription responses without local fallback", async () => {
+    const adapter = new PaystackAdapter(getPaystackConfig(testEnvironment), { post: jest.fn(), get: jest.fn().mockResolvedValue({ status: true, data: { subscription_code: "other" } }) });
+    await expect(adapter.getSubscriptionState("sub_code")).rejects.toMatchObject({ kind: "MALFORMED_RESPONSE" });
+  });
 });

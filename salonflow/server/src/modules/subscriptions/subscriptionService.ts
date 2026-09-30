@@ -67,6 +67,15 @@ export function deriveSubscriptionAccessState(status: SubscriptionStatus): Subsc
   }
 }
 
+/** Scheduled cancellation is effective only from server time and a verified period end. */
+export function isCancellationEffective(subscription: SubscriptionAccessRecord, now = new Date()): boolean {
+  return subscription.cancelAtPeriodEnd && subscription.currentPeriodEndsAt !== null && now >= subscription.currentPeriodEndsAt;
+}
+
+export function getCancellationFinalization(subscription: SubscriptionAccessRecord, now = new Date()): { shouldFinalize: boolean } {
+  return { shouldFinalize: subscription.status !== "CANCELLED" && isCancellationEffective(subscription, now) };
+}
+
 /**
  * The database status is the source of truth, with persisted dates resolving
  * the few time-based edges before a future lifecycle worker persists them.
@@ -75,6 +84,10 @@ export function deriveSubscriptionAccessState(status: SubscriptionStatus): Subsc
  */
 export function resolveBusinessAccess(subscription: SubscriptionAccessRecord | null, now = new Date()): BusinessAccessResolution {
   if (!subscription) return { accessState: "UNAVAILABLE", allowed: false, effectiveStatus: null, warning: null, graceEndsAt: null };
+
+  if (isCancellationEffective(subscription, now)) {
+    return { accessState: "SUSPENDED", allowed: false, effectiveStatus: "CANCELLED", warning: null, graceEndsAt: null };
+  }
 
   if (subscription.status === "TRIALING" && subscription.trialEndsAt && now >= subscription.trialEndsAt) {
     const graceEndsAt = subscription.graceEndsAt ?? getGracePeriodEndsAt(subscription.trialEndsAt);

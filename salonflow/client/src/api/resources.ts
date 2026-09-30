@@ -38,6 +38,9 @@ export const authApi = {
 export const subscriptionApi = {
   get: () => api.get<SubscriptionDetails>("/subscription"),
   checkout: (planCode: "STARTER" | "GROWTH" | "PRO") => api.post<{ authorizationUrl: string; accessCode: string; reference: string }>("/subscription/checkout", { planCode }),
+  history: () => api.get<Array<{ id: string; amount: number; currency: string; status: string; paidAt: string | null; occurredAt: string }>>("/subscription/history"),
+  cancel: () => api.post<{ cancelAtPeriodEnd: boolean; currentPeriodEndsAt: string | null }>("/subscription/cancel"),
+  undoCancel: () => api.post<{ cancelAtPeriodEnd: boolean; currentPeriodEndsAt: string | null }>("/subscription/cancel/undo"),
 };
 
 export interface OnboardingState { onboardingStatus: "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED"; onboardingStep: "BUSINESS_DETAILS" | "SERVICES" | "BUSINESS_HOURS" | "TEAM" | "INTEGRATIONS" | "REVIEW" | null; onboardingCompletedAt?: string | null; }

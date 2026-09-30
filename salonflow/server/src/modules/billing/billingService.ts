@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import { prisma } from "../../lib/prisma";
 import { getPlanDefinition } from "../subscriptions/planConfig";
 import { BillingProviderAdapter, BillingProviderError, NormalizedBillingEvent } from "./billingProvider";
+import { getCancellationFinalization, isCancellationEffective } from "../subscriptions/subscriptionService";
 
 export class BillingCorrelationError extends Error {}
 
@@ -49,6 +50,52 @@ export async function initializeBusinessCheckout(input: {
     await prisma.billingCheckout.update({ where: { id: checkout.id }, data: { status: "FAILED" } });
     throw error;
   }
+}
+
+export async function scheduleCancellation(businessId: string, actorUserId: string) {
+  const subscription = await prisma.subscription.findUnique({ where: { businessId } });
+  if (!subscription || (subscription.status !== SubscriptionStatus.ACTIVE && subscription.status !== SubscriptionStatus.PAST_DUE)) throw new BillingCorrelationError("This subscription cannot be cancelled right now");
+  if (subscription.cancelAtPeriodEnd) return subscription;
+  const updated = await prisma.subscription.update({ where: { id: subscription.id }, data: { cancelAtPeriodEnd: true } });
+  await prisma.auditLog.create({ data: { businessId, actorUserId, actorType: "USER", resource: "billing", resourceId: subscription.id, action: "cancellation_scheduled", newValue: JSON.stringify({ currentPeriodEndsAt: subscription.currentPeriodEndsAt }) } });
+  return updated;
+}
+
+export async function undoScheduledCancellation(businessId: string, actorUserId: string) {
+  const subscription = await prisma.subscription.findUnique({ where: { businessId } });
+  if (!subscription?.cancelAtPeriodEnd) return subscription;
+  if (isCancellationEffective(subscription)) throw new BillingCorrelationError("An effective cancellation requires a verified payment to recover");
+  const updated = await prisma.subscription.update({ where: { id: subscription.id }, data: { cancelAtPeriodEnd: false } });
+  await prisma.auditLog.create({ data: { businessId, actorUserId, actorType: "USER", resource: "billing", resourceId: subscription.id, action: "cancellation_undone" } });
+  return updated;
+}
+
+export async function getBillingHistory(businessId: string) {
+  return prisma.billingInvoice.findMany({ where: { businessId }, select: { id: true, amount: true, currency: true, status: true, paidAt: true, occurredAt: true }, orderBy: { occurredAt: "desc" }, take: 50 });
+}
+
+export async function finalizeScheduledCancellation(businessId: string, now = new Date()) {
+  const subscription = await prisma.subscription.findUnique({ where: { businessId } });
+  if (!subscription || !getCancellationFinalization(subscription, now).shouldFinalize) return subscription;
+  const updated = await prisma.subscription.update({ where: { id: subscription.id }, data: { status: SubscriptionStatus.CANCELLED } });
+  await prisma.auditLog.create({ data: { businessId, actorType: "SYSTEM", resource: "billing", resourceId: subscription.id, action: "cancellation_effective" } });
+  return updated;
+}
+
+export async function reconcileKnownSubscription(businessId: string, provider: BillingProviderAdapter) {
+  const subscription = await prisma.subscription.findUnique({ where: { businessId } });
+  if (!subscription?.providerSubscriptionId || !provider.getSubscriptionState) return { reconciled: false as const };
+  const remote = await provider.getSubscriptionState(subscription.providerSubscriptionId);
+  if (!remote || remote.providerSubscriptionId !== subscription.providerSubscriptionId) return { reconciled: false as const };
+  const data = {
+    providerCustomerId: remote.providerCustomerId ?? subscription.providerCustomerId,
+    providerPlanCode: remote.providerPlanCode ?? subscription.providerPlanCode,
+    currentPeriodEndsAt: remote.currentPeriodEndsAt ?? subscription.currentPeriodEndsAt,
+  };
+  if (JSON.stringify(data) === JSON.stringify({ providerCustomerId: subscription.providerCustomerId, providerPlanCode: subscription.providerPlanCode, currentPeriodEndsAt: subscription.currentPeriodEndsAt })) return { reconciled: true as const, changed: false };
+  await prisma.subscription.update({ where: { id: subscription.id }, data });
+  await prisma.auditLog.create({ data: { businessId, actorType: "SYSTEM", resource: "billing", resourceId: subscription.id, action: "reconciliation_changed" } });
+  return { reconciled: true as const, changed: true };
 }
 
 export async function processVerifiedPaystackEvent(event: NormalizedBillingEvent) {

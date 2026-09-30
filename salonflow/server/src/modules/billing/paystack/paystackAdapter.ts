@@ -24,6 +24,7 @@ export interface PaystackHttpClient {
     body: Record<string, string>,
     options: { authorization: string; timeoutMs: number },
   ): Promise<PaystackHttpResponse>;
+  get?(path: string, options: { authorization: string; timeoutMs: number }): Promise<{ status: boolean; data?: Record<string, unknown> }>;
 }
 
 /**
@@ -39,6 +40,27 @@ export class PaystackAdapter implements BillingProviderAdapter {
 
   getPlanCode(planCode: InitializeCheckoutInput["planCode"]): string {
     return this.config.planCodes[planCode];
+  }
+
+  async getSubscriptionState(providerSubscriptionId: string) {
+    if (!this.http.get) throw new BillingProviderError("UNAVAILABLE", "Paystack subscription lookup is unavailable");
+    try {
+      const response = await this.http.get(`/subscription/${encodeURIComponent(providerSubscriptionId)}`, { authorization: `Bearer ${this.config.secretKey}`, timeoutMs: this.config.timeoutMs });
+      const data = response.data;
+      if (!response.status || !data || typeof data.subscription_code !== "string" || data.subscription_code !== providerSubscriptionId) throw new BillingProviderError("MALFORMED_RESPONSE", "Paystack returned an invalid subscription response");
+      const next = typeof data.next_payment_date === "string" ? new Date(data.next_payment_date) : undefined;
+      return {
+        providerSubscriptionId: data.subscription_code,
+        providerCustomerId: typeof data.customer === "object" && data.customer !== null && typeof (data.customer as Record<string, unknown>).id === "string" ? (data.customer as Record<string, string>).id : undefined,
+        providerPlanCode: typeof data.plan === "object" && data.plan !== null && typeof (data.plan as Record<string, unknown>).plan_code === "string" ? (data.plan as Record<string, string>).plan_code : undefined,
+        status: data.status === "active" ? "ACTIVE" as const : data.status === "cancelled" ? "CANCELLED" as const : data.status === "past_due" ? "PAST_DUE" as const : undefined,
+        currentPeriodEndsAt: next && !Number.isNaN(next.getTime()) ? next : undefined,
+      };
+    } catch (error) {
+      if (error instanceof BillingProviderError) throw error;
+      if (error instanceof Error && error.name === "AbortError") throw new BillingProviderError("TIMEOUT", "Paystack subscription lookup timed out");
+      throw new BillingProviderError("UNAVAILABLE", "Paystack subscription lookup is unavailable");
+    }
   }
 
   async initializeCheckout(input: InitializeCheckoutInput): Promise<InitializeCheckoutResult> {
