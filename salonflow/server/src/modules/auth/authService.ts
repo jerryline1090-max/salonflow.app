@@ -3,6 +3,7 @@ import { prisma } from "../../lib/prisma";
 import { hashPassword, verifyPassword, signToken } from "../../core/auth";
 import { writeAuditLog } from "../../core/auditLog";
 import { createTrialSubscription } from "../subscriptions/subscriptionService";
+import { createReferralAttribution, getOrCreateReferralCode } from "../referrals/referralService";
 
 export class InvalidCredentialsError extends Error {
   constructor() {
@@ -24,6 +25,7 @@ export interface RegisterBusinessInput {
   email: string;
   password: string;
   phone?: string;
+  referralCode?: string;
 }
 
 /**
@@ -44,25 +46,33 @@ export async function registerBusiness(input: RegisterBusinessInput) {
 
   const passwordHash = await hashPassword(input.password);
 
-  const business = await prisma.business.create({
-    data: {
-      name: input.businessName.trim(),
-      phone: input.phone?.trim() || null,
-      onboardingStatus: "IN_PROGRESS",
-      onboardingStep: "BUSINESS_DETAILS",
-      subscription: {
-        create: createTrialSubscription(),
-      },
-      users: {
-        create: {
-          name: input.ownerName.trim(),
-          email,
-          passwordHash,
-          role: "OWNER",
+  const business = await prisma.$transaction(async (tx) => {
+    const created = await tx.business.create({
+      data: {
+        name: input.businessName.trim(),
+        phone: input.phone?.trim() || null,
+        onboardingStatus: "IN_PROGRESS",
+        onboardingStep: "BUSINESS_DETAILS",
+        subscription: {
+          create: createTrialSubscription(),
+        },
+        users: {
+          create: {
+            name: input.ownerName.trim(),
+            email,
+            passwordHash,
+            role: "OWNER",
+          },
         },
       },
-    },
-    include: { users: true },
+      include: { users: true },
+    });
+    await createReferralAttribution({ db: tx, referredBusinessId: created.id, referralCode: input.referralCode });
+    // Every newly eligible business receives an opaque, stable code as part of
+    // the same registration transaction. Legacy businesses receive theirs on
+    // first referral-summary access rather than being backfilled with guesses.
+    await getOrCreateReferralCode(created.id, tx);
+    return created;
   });
 
   const owner = business.users[0];

@@ -13,11 +13,11 @@ export const authRouter = Router();
 // Public — this is the only way a Business + its OWNER account come into existence.
 authRouter.post("/register", asyncHandler(async (req, res) => {
   try {
-    const { businessName, ownerName, email, password, phone } = req.body;
+    const { businessName, ownerName, email, password, phone, referralCode } = req.body;
     if (!businessName || !ownerName || !email || !password) {
       return res.status(400).json({ error: "businessName, ownerName, email, and password are required" });
     }
-    const { business, user, token } = await registerBusiness({ businessName, ownerName, email, password, phone });
+    const { business, user, token } = await registerBusiness({ businessName, ownerName, email, password, phone, referralCode });
     res.status(201).json({ token, business, user: { id: user.id, name: user.name, email: user.email, role: user.role, businessId: business.id } });
   } catch (err: any) {
     rethrowIfDatabaseUnavailable(err);

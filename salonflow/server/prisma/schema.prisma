@@ -202,6 +202,24 @@ enum BillingCheckoutStatus {
   FAILED
 }
 
+// Referral attribution and commercial credits are separate from both provider
+// invoices and the salon's operational Payment ledger.
+enum ReferralStatus {
+  ATTRIBUTED
+  REWARDED
+  REVERSED
+}
+
+enum BillingCreditDirection {
+  CREDIT
+  DEBIT
+}
+
+enum BillingCreditReason {
+  REFERRAL_REWARD
+  REFERRAL_REVERSAL
+}
+
 // ── AI Receptionist / multi-channel conversation enums ──────────────────
 
 enum ConversationChannel {
@@ -306,6 +324,10 @@ model Business {
   appointments     Appointment[]
   payments         Payment[]
   subscription     Subscription?
+  referralCode     String?      @unique
+  referralsMade    Referral[]   @relation("ReferrerBusiness")
+  referralReceived Referral?    @relation("ReferredBusiness")
+  billingCredits   BillingCreditEntry[]
   billingInvoices  BillingInvoice[]
   billingEvents    BillingEvent[]
   billingCheckouts BillingCheckout[]
@@ -426,6 +448,40 @@ model BillingEvent {
 
   @@unique([provider, providerEventId])
   @@index([businessId, receivedAt])
+}
+
+// A referral is a one-time attribution of a newly registered business to the
+// business whose server-generated code was supplied at registration.
+model Referral {
+  id                 String         @id @default(cuid())
+  referrerBusinessId String
+  referrerBusiness   Business       @relation("ReferrerBusiness", fields: [referrerBusinessId], references: [id], onDelete: Restrict)
+  referredBusinessId String         @unique
+  referredBusiness   Business       @relation("ReferredBusiness", fields: [referredBusinessId], references: [id], onDelete: Restrict)
+  referralCode       String
+  status             ReferralStatus @default(ATTRIBUTED)
+  rewardedAt         DateTime?
+  createdAt          DateTime       @default(now())
+
+  creditEntries      BillingCreditEntry[]
+
+  @@index([referrerBusinessId, status])
+}
+
+// Immutable commercial-credit entries. The balance is always derived from
+// this ledger; it is never maintained as a mutable Business counter.
+model BillingCreditEntry {
+  id          String                 @id @default(cuid())
+  businessId  String
+  business    Business               @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  amount      Int
+  direction   BillingCreditDirection
+  reason      BillingCreditReason
+  referralId  String?                @unique
+  referral    Referral?              @relation(fields: [referralId], references: [id], onDelete: Restrict)
+  createdAt   DateTime               @default(now())
+
+  @@index([businessId, createdAt])
 }
 
 // Salon operating hours — business-wide. Staff-specific schedules live on Staff.

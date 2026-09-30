@@ -4,6 +4,7 @@ import { prisma } from "../../lib/prisma";
 import { getPlanDefinition } from "../subscriptions/planConfig";
 import { BillingProviderAdapter, BillingProviderError, NormalizedBillingEvent } from "./billingProvider";
 import { getCancellationFinalization, isCancellationEffective } from "../subscriptions/subscriptionService";
+import { rewardReferralForVerifiedPayment } from "../referrals/referralService";
 
 export class BillingCorrelationError extends Error {}
 
@@ -138,6 +139,10 @@ export async function processVerifiedPaystackEvent(event: NormalizedBillingEvent
           update: { status: BillingInvoiceStatus.PAID, paidAt: occurredAt, occurredAt },
         });
         await tx.subscription.update({ where: { id: subscription.id }, data: { status: SubscriptionStatus.ACTIVE, planCode: expected.planCode, provider: BillingProvider.PAYSTACK, providerCustomerId: event.providerCustomerId ?? subscription.providerCustomerId, providerSubscriptionId: event.providerSubscriptionId ?? subscription.providerSubscriptionId, providerPlanCode: event.providerPlanCode ?? expected.providerPlanCode, currentPeriodEndsAt: event.currentPeriodEndsAt ?? subscription.currentPeriodEndsAt, graceEndsAt: null, pastDueEndsAt: null } });
+        // A reward is created only after the same verified charge has been
+        // correlated and has activated the referred business. Replays are
+        // independently blocked by BillingEvent and Referral status.
+        await rewardReferralForVerifiedPayment(businessId, tx);
         if (checkout) await tx.billingCheckout.update({ where: { id: checkout.id }, data: { status: "COMPLETED", completedAt: occurredAt } });
         await tx.auditLog.create({ data: { businessId, actorType: "SYSTEM", resource: "billing", resourceId: subscription.id, action: "subscription_activated", newValue: JSON.stringify({ planCode: expected.planCode, reference: event.providerReference }) } });
       } else if (subscription.status === SubscriptionStatus.ACTIVE || subscription.status === SubscriptionStatus.PAST_DUE) {

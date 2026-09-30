@@ -19,6 +19,9 @@ import {
 
 beforeEach(() => {
   (writeAuditLog as jest.Mock).mockResolvedValue(undefined);
+  (prisma.$transaction as jest.Mock).mockImplementation(async (callback: any) => callback(prisma));
+  (prisma.business.update as jest.Mock).mockResolvedValue({ referralCode: "SFNEWCODE" });
+  (prisma.business.findUnique as jest.Mock).mockResolvedValue({ referralCode: null });
 });
 
 describe("registerBusiness", () => {
@@ -63,10 +66,37 @@ describe("registerBusiness", () => {
     expect(createArgs.data.subscription.create.trialEndsAt.getTime()).toBeLessThanOrEqual(Date.now() + (14 * 24 * 60 * 60 * 1000) + 1000);
     expect(createArgs.data.onboardingStatus).toBe("IN_PROGRESS");
     expect(createArgs.data.onboardingStep).toBe("BUSINESS_DETAILS");
+    expect(prisma.business.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "biz_1" },
+      data: { referralCode: expect.stringMatching(/^SF[A-F0-9]{10}$/) },
+    }));
 
     expect(signToken).toHaveBeenCalledWith({ sub: "user_1", businessId: "biz_1", role: "OWNER" });
     expect(result.token).toBe("signed.jwt.token");
     expect(result.user).toBe(owner);
+  });
+
+  it("attributes a registration only through a valid server-resolved referral code", async () => {
+    (prisma.user.findUnique as jest.Mock).mockResolvedValue(null);
+    (hashPassword as jest.Mock).mockResolvedValue("hashed_pw");
+    (signToken as jest.Mock).mockReturnValue("signed.jwt.token");
+    (prisma.business.create as jest.Mock).mockResolvedValue({ id: "biz_new", users: [{ id: "user_new", role: "OWNER" }] });
+    (prisma.business.findUnique as jest.Mock).mockResolvedValue({ id: "biz_referrer" });
+    (prisma.referral.create as jest.Mock).mockResolvedValue({ id: "referral_1" });
+
+    await registerBusiness({ businessName: "New Salon", ownerName: "Ada", email: "ada@test.com", password: "password1", referralCode: "  sfabc123  " });
+
+    expect(prisma.referral.create).toHaveBeenCalledWith({ data: { referrerBusinessId: "biz_referrer", referredBusinessId: "biz_new", referralCode: "SFABC123" } });
+  });
+
+  it("rejects an explicit invalid referral code without creating an attribution", async () => {
+    (prisma.user.findUnique as jest.Mock).mockResolvedValue(null);
+    (hashPassword as jest.Mock).mockResolvedValue("hashed_pw");
+    (prisma.business.create as jest.Mock).mockResolvedValue({ id: "biz_new", users: [{ id: "user_new", role: "OWNER" }] });
+    (prisma.business.findUnique as jest.Mock).mockResolvedValue(null);
+
+    await expect(registerBusiness({ businessName: "New Salon", ownerName: "Ada", email: "ada@test.com", password: "password1", referralCode: "missing" })).rejects.toThrow(/referral code/i);
+    expect(prisma.referral.create).not.toHaveBeenCalled();
   });
 });
 

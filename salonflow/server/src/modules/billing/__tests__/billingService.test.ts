@@ -17,6 +17,9 @@ function setup({ existingEvent = null as any, initialCheckout = null as any, rec
   (prisma.subscription.update as jest.Mock).mockResolvedValue({});
   (prisma.billingCheckout.update as jest.Mock).mockResolvedValue({});
   (prisma.auditLog.create as jest.Mock).mockResolvedValue({});
+  (prisma.referral.findUnique as jest.Mock).mockResolvedValue(null);
+  (prisma.referral.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+  (prisma.billingCreditEntry.create as jest.Mock).mockResolvedValue({});
   (prisma.$transaction as jest.Mock).mockImplementation(async (callback: any) => callback(prisma));
 }
 
@@ -43,6 +46,17 @@ describe("persistent Paystack webhook correlation", () => {
     expect(prisma.subscription.findFirst).toHaveBeenCalledWith({ where: { provider: "PAYSTACK", providerSubscriptionId: "sub_code" } });
     expect(prisma.billingInvoice.upsert).toHaveBeenCalledTimes(1);
     expect(prisma.subscription.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "sub_1" }, data: expect.objectContaining({ status: "ACTIVE", pastDueEndsAt: null }) }));
+  });
+
+  it("awards a one-time referral credit only after a verified charge succeeds", async () => {
+    setup({ initialCheckout: checkout });
+    (prisma.referral.findUnique as jest.Mock).mockResolvedValue({ id: "referral_1", referrerBusinessId: "biz_referrer", status: "ATTRIBUTED", referrerBusiness: { subscription: { planCode: "STARTER" } } });
+    await processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "charge.success", providerEventId: "charge.success:first", providerReference: "sf_initial", amount: 1_500_000, currency: "NGN" });
+    expect(prisma.billingCreditEntry.create).toHaveBeenCalledWith({ data: expect.objectContaining({ businessId: "biz_referrer", amount: 1_000_000, referralId: "referral_1" }) });
+
+    setup({ initialCheckout: checkout });
+    await processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "subscription.create", providerEventId: "subscription.create:not-payment", providerReference: "sf_initial", providerSubscriptionId: "sub_code" });
+    expect(prisma.billingCreditEntry.create).not.toHaveBeenCalled();
   });
 
   it("moves a recurring provider-matched payment failure to PAST_DUE without suspension", async () => {

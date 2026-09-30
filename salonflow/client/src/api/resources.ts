@@ -30,7 +30,7 @@ import type {
 
 export const authApi = {
   login: (email: string, password: string) => api.post<{ token: string; user: User }>("/auth/login", { email, password }),
-  register: (input: { businessName: string; ownerName: string; email: string; password: string; phone: string }) =>
+  register: (input: { businessName: string; ownerName: string; email: string; password: string; phone: string; referralCode?: string }) =>
     api.post<{ token: string; user: User; business: Business }>("/auth/register", input),
   me: () => api.get<User>("/auth/me"),
 };
@@ -41,6 +41,19 @@ export const subscriptionApi = {
   history: () => api.get<Array<{ id: string; amount: number; currency: string; status: string; paidAt: string | null; occurredAt: string }>>("/subscription/history"),
   cancel: () => api.post<{ cancelAtPeriodEnd: boolean; currentPeriodEndsAt: string | null }>("/subscription/cancel"),
   undoCancel: () => api.post<{ cancelAtPeriodEnd: boolean; currentPeriodEndsAt: string | null }>("/subscription/cancel/undo"),
+};
+
+export interface ReferralSummary {
+  referralCode: string;
+  referralLink: string;
+  counts: { attributed: number; rewarded: number };
+  creditBalance: number;
+  referrals: Array<{ id: string; status: "ATTRIBUTED" | "REWARDED" | "REVERSED"; referralCode: string; createdAt: string; rewardedAt: string | null }>;
+  credits: Array<{ id: string; amount: number; direction: "CREDIT" | "DEBIT"; reason: string; createdAt: string }>;
+}
+
+export const referralsApi = {
+  get: () => api.get<ReferralSummary>("/referrals"),
 };
 
 export interface OnboardingState { onboardingStatus: "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED"; onboardingStep: "BUSINESS_DETAILS" | "SERVICES" | "BUSINESS_HOURS" | "TEAM" | "INTEGRATIONS" | "REVIEW" | null; onboardingCompletedAt?: string | null; }

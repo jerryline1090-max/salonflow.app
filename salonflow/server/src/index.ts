@@ -33,6 +33,7 @@ import { healthRouter } from "./routes/health.routes";
 import { requestTiming } from "./middleware/requestTiming";
 import { requireBusinessAccess } from "./middleware/requireBusinessAccess";
 import { subscriptionRouter } from "./routes/subscription.routes";
+import { referralsRouter } from "./routes/referrals.routes";
 
 protectRouterAsyncHandlers(
   authRouter,
@@ -54,6 +55,7 @@ protectRouterAsyncHandlers(
   notificationsRouter,
   onboardingRouter,
   subscriptionRouter,
+  referralsRouter,
   healthRouter,
 );
 
@@ -114,6 +116,7 @@ app.use("/api", authenticate);
 
 // Recovery/onboarding exceptions remain authenticated and narrowly scoped.
 app.use("/api/subscription", subscriptionRouter);
+app.use("/api/referrals", referralsRouter);
 app.use("/api/onboarding", onboardingRouter);
 app.use("/api", requireBusinessAccess);
 

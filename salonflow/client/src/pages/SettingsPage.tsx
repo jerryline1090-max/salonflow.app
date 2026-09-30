@@ -7,6 +7,7 @@ import { SettingsTeam } from "@/components/settings/SettingsTeam";
 import { PageContainer } from "@/components/PageContainer";
 import { PageHeader } from "@/components/PageHeader";
 import { SettingsBilling } from "@/components/settings/SettingsBilling";
+import { SettingsReferrals } from "@/components/settings/SettingsReferrals";
 
 export function SettingsPage() {
   return (
@@ -14,6 +15,7 @@ export function SettingsPage() {
 
       <div className="space-y-6">
         <SettingsBilling />
+        <SettingsReferrals />
         <SettingsBusinessProfile />
         <SettingsWorkingHours />
         <SettingsBookingRules />
