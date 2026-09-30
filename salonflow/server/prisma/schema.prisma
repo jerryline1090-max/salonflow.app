@@ -196,6 +196,12 @@ enum BillingEventStatus {
   FAILED
 }
 
+enum BillingCheckoutStatus {
+  INITIALIZED
+  COMPLETED
+  FAILED
+}
+
 // ── AI Receptionist / multi-channel conversation enums ──────────────────
 
 enum ConversationChannel {
@@ -302,6 +308,7 @@ model Business {
   subscription     Subscription?
   billingInvoices  BillingInvoice[]
   billingEvents    BillingEvent[]
+  billingCheckouts BillingCheckout[]
   notifications    Notification[]
   integrations     Integration[]
   workingHours     BusinessHours[]
@@ -333,10 +340,33 @@ model Subscription {
   updatedAt           DateTime           @updatedAt
 
   billingInvoices     BillingInvoice[]
+  billingCheckouts    BillingCheckout[]
 
   @@index([status])
   @@index([provider, providerCustomerId])
   @@index([provider, providerSubscriptionId])
+}
+
+// Server-created checkout correlations. Provider metadata is helpful but is
+// never used as authorization; webhook processing resolves this record first.
+model BillingCheckout {
+  id               String                @id @default(cuid())
+  businessId       String
+  business         Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  subscriptionId   String
+  subscription     Subscription          @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  provider         BillingProvider
+  reference        String                @unique
+  planCode         PlanCode
+  providerPlanCode String
+  amount           Int
+  currency         String                @default("NGN")
+  status           BillingCheckoutStatus @default(INITIALIZED)
+  createdAt        DateTime              @default(now())
+  completedAt      DateTime?
+
+  @@index([businessId, createdAt])
+  @@index([subscriptionId, createdAt])
 }
 
 // Provider billing history. This is not the salon's operational Payment

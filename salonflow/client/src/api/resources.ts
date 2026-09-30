@@ -37,6 +37,7 @@ export const authApi = {
 
 export const subscriptionApi = {
   get: () => api.get<SubscriptionDetails>("/subscription"),
+  checkout: (planCode: "STARTER" | "GROWTH" | "PRO") => api.post<{ authorizationUrl: string; accessCode: string; reference: string }>("/subscription/checkout", { planCode }),
 };
 
 export interface OnboardingState { onboardingStatus: "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED"; onboardingStep: "BUSINESS_DETAILS" | "SERVICES" | "BUSINESS_HOURS" | "TEAM" | "INTEGRATIONS" | "REVIEW" | null; onboardingCompletedAt?: string | null; }

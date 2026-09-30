@@ -27,6 +27,10 @@ export interface SubscriptionSummary {
   trialDaysRemaining: number | null;
 }
 
+// Access decisions intentionally depend only on commercial lifecycle fields,
+// not provider implementation details.
+type SubscriptionAccessRecord = Pick<Subscription, "id" | "businessId" | "planCode" | "status" | "trialEndsAt" | "graceEndsAt" | "currentPeriodEndsAt" | "cancelAtPeriodEnd" | "createdAt" | "updatedAt">;
+
 export function addDays(from: Date, days: number): Date {
   return new Date(from.getTime() + days * 24 * 60 * 60 * 1000);
 }
@@ -69,7 +73,7 @@ export function deriveSubscriptionAccessState(status: SubscriptionStatus): Subsc
  * Legacy ACTIVE rows with no period end deliberately remain allowed until a
  * production reconciliation establishes their paid renewal date.
  */
-export function resolveBusinessAccess(subscription: Subscription | null, now = new Date()): BusinessAccessResolution {
+export function resolveBusinessAccess(subscription: SubscriptionAccessRecord | null, now = new Date()): BusinessAccessResolution {
   if (!subscription) return { accessState: "UNAVAILABLE", allowed: false, effectiveStatus: null, warning: null, graceEndsAt: null };
 
   if (subscription.status === "TRIALING" && subscription.trialEndsAt && now >= subscription.trialEndsAt) {
@@ -103,7 +107,7 @@ export function resolveBusinessAccess(subscription: Subscription | null, now = n
   }
 }
 
-export function summarizeSubscription(subscription: Subscription, now = new Date()): SubscriptionSummary {
+export function summarizeSubscription(subscription: SubscriptionAccessRecord, now = new Date()): SubscriptionSummary {
   const access = resolveBusinessAccess(subscription, now);
   const trialDaysRemaining = access.effectiveStatus === "TRIALING" && subscription.trialEndsAt
     ? Math.max(0, Math.ceil((subscription.trialEndsAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)))

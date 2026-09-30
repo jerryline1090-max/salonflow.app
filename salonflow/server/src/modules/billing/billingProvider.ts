@@ -25,6 +25,7 @@ export interface InitializeCheckoutInput {
   reference: string;
   email: string;
   planCode: PlanCode;
+  metadata: { checkoutId: string; checkoutReference: string; businessId: string; subscriptionId: string; planCode: PlanCode };
   callbackUrl?: string;
 }
 
@@ -40,6 +41,12 @@ export interface NormalizedBillingEvent {
   eventType: string;
   providerReference?: string;
   occurredAt?: Date;
+  amount?: number;
+  currency?: string;
+  providerCustomerId?: string;
+  providerSubscriptionId?: string;
+  providerPlanCode?: string;
+  currentPeriodEndsAt?: Date;
 }
 
 /**

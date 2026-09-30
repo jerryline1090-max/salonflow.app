@@ -1,6 +1,9 @@
 import { Router } from "express";
 import { getPlanDefinition } from "../modules/subscriptions/planConfig";
 import { getBusinessSubscription, resolveBusinessAccess, summarizeSubscription } from "../modules/subscriptions/subscriptionService";
+import { PlanCode } from "@prisma/client";
+import { initializeBusinessCheckout } from "../modules/billing/billingService";
+import { createPaystackProvider } from "../modules/billing/paystack/paystackProviderFactory";
 
 export const subscriptionRouter = Router();
 
@@ -17,6 +20,25 @@ subscriptionRouter.get("/", async (req, res, next) => {
     }
     const plan = getPlanDefinition(subscription.planCode);
     res.json({ ...summary, displayName: plan.displayName, currency: plan.currency, monthlyPriceMinor: plan.monthlyPriceMinor, effectiveAccess: access.accessState });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Billing recovery remains available to an authenticated OWNER even when the
+// business is suspended; all tenant identity and pricing are resolved server-side.
+subscriptionRouter.post("/checkout", async (req, res, next) => {
+  try {
+    if (req.actor!.role !== "OWNER") return res.status(403).json({ error: "Only the business owner can start billing checkout" });
+    const planCode = req.body?.planCode;
+    if (!Object.values(PlanCode).includes(planCode)) return res.status(400).json({ error: "A valid subscription plan is required" });
+    const checkout = await initializeBusinessCheckout({
+      businessId: req.actor!.businessId!,
+      actorUserId: req.actor!.userId,
+      planCode,
+      provider: createPaystackProvider(),
+    });
+    res.status(201).json(checkout);
   } catch (error) {
     next(error);
   }

@@ -3,8 +3,29 @@ import { prisma } from "../lib/prisma";
 import { verifyMetaSignature } from "../middleware/verifyMetaSignature";
 import { buildWhatsAppDeps, buildInstagramDeps } from "../modules/ai/orchestratorFactory";
 import { handleUnifiedMessage } from "../modules/ai/receptionistOrchestrator";
+import { createPaystackProvider } from "../modules/billing/paystack/paystackProviderFactory";
+import { processVerifiedPaystackEvent } from "../modules/billing/billingService";
 
 export const webhooksRouter = Router();
+
+// Paystack is intentionally public: its HMAC over the exact raw request body
+// is the authentication boundary. This handler never logs bodies/signatures.
+webhooksRouter.post("/paystack", async (req, res) => {
+  try {
+    const provider = createPaystackProvider();
+    const signature = req.header("x-paystack-signature");
+    if (!Buffer.isBuffer((req as any).rawBody) || !provider.verifyWebhookSignature((req as any).rawBody, signature)) {
+      return res.status(401).json({ error: "Invalid webhook signature" });
+    }
+    const event = provider.normalizeWebhookEvent(req.body);
+    if (!event) return res.sendStatus(200); // unsupported/malformed events are safely acknowledged
+    const result = await processVerifiedPaystackEvent(event);
+    return res.status(result.handled ? 200 : 202).json({ received: true, duplicate: "duplicate" in result && result.duplicate === true });
+  } catch {
+    // Do not expose provider or billing details to an unauthenticated caller.
+    return res.status(500).json({ error: "Webhook processing failed" });
+  }
+});
 
 /**
  * Section 21: WhatsApp/Instagram → Channel Adapter → Unified Conversation

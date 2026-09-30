@@ -36,6 +36,7 @@ describe("Paystack provider foundation", () => {
       email: "owner@example.test",
       planCode: PlanCode.GROWTH,
       reference: "billing-reference-1",
+      metadata: { checkoutId: "checkout-1", checkoutReference: "billing-reference-1", businessId: "business-1", subscriptionId: "subscription-1", planCode: PlanCode.GROWTH },
     })).resolves.toEqual({
       authorizationUrl: "https://checkout.test/authorization",
       accessCode: "access-test",
@@ -63,6 +64,7 @@ describe("Paystack provider foundation", () => {
       email: "owner@example.test",
       planCode: PlanCode.STARTER,
       reference: "billing-reference-2",
+      metadata: { checkoutId: "checkout-2", checkoutReference: "billing-reference-2", businessId: "business-1", subscriptionId: "subscription-1", planCode: PlanCode.STARTER },
     })).rejects.toMatchObject({ kind: "TIMEOUT" });
   });
 
@@ -75,6 +77,6 @@ describe("Paystack provider foundation", () => {
     expect(adapter.normalizeWebhookEvent({
       event: "charge.success",
       data: { id: 42, reference: "billing-reference-3", paid_at: "2026-09-29T00:00:00.000Z" },
-    })).toMatchObject({ provider: "PAYSTACK", providerEventId: "42", eventType: "charge.success" });
+    })).toMatchObject({ provider: "PAYSTACK", providerEventId: "charge.success:42", eventType: "charge.success" });
   });
 });
