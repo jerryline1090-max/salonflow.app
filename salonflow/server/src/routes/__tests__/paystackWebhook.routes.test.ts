@@ -27,4 +27,21 @@ describe("POST /api/webhooks/paystack", () => {
     expect((provider.verifyWebhookSignature as jest.Mock).mock.calls[0]?.[0]).toBeInstanceOf(Buffer);
     expect(processVerifiedPaystackEvent).toHaveBeenCalledTimes(1);
   });
+
+  it("returns 503 only when verified event processing is retriable", async () => {
+    const provider = { verifyWebhookSignature: jest.fn(() => true), normalizeWebhookEvent: jest.fn(() => ({ provider: "PAYSTACK", providerEventId: "charge.success:retry", eventType: "charge.success", providerReference: "sf_1" })) };
+    (createPaystackProvider as jest.Mock).mockReturnValue(provider);
+    (processVerifiedPaystackEvent as jest.Mock).mockResolvedValue({ handled: false, retryable: true, reason: "processing" });
+    const response = await request(app()).post("/api/webhooks/paystack").set("x-paystack-signature", "valid").send({ event: "charge.success", data: { id: 42, reference: "sf_1" } });
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({ error: "Webhook processing is temporarily unavailable" });
+  });
+
+  it("acknowledges a terminal rejected event without asking the provider to retry", async () => {
+    const provider = { verifyWebhookSignature: jest.fn(() => true), normalizeWebhookEvent: jest.fn(() => ({ provider: "PAYSTACK", providerEventId: "charge.success:rejected", eventType: "charge.success", providerReference: "sf_1" })) };
+    (createPaystackProvider as jest.Mock).mockReturnValue(provider);
+    (processVerifiedPaystackEvent as jest.Mock).mockResolvedValue({ handled: false, retryable: false, reason: "provider_identity_conflict" });
+    const response = await request(app()).post("/api/webhooks/paystack").set("x-paystack-signature", "valid").send({ event: "charge.success", data: { id: 42, reference: "sf_1" } });
+    expect(response.status).toBe(200);
+  });
 });

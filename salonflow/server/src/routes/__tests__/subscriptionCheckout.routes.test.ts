@@ -10,6 +10,7 @@ import request from "supertest";
 import { signToken } from "../../core/auth";
 import { errorHandler } from "../../middleware/errorHandler";
 import { BillingCorrelationError, getBillingHistory, initializeBusinessCheckout } from "../../modules/billing/billingService";
+import { BillingProviderError } from "../../modules/billing/billingProvider";
 import { subscriptionRouter } from "../subscription.routes";
 
 function app() { const instance = express(); instance.use(express.json()); instance.use("/api/subscription", require("../../middleware/authenticate").authenticate, subscriptionRouter); instance.use(errorHandler); return instance; }
@@ -49,6 +50,18 @@ describe("POST /api/subscription/checkout", () => {
     const response = await request(app()).post("/api/subscription/checkout").set("Authorization", `Bearer ${owner}`).send({ planCode: "STARTER" });
     expect(response.status).toBe(409);
     expect(response.body).toEqual({ error: "Existing recurring billing requires reconciliation before a replacement checkout can be started" });
+  });
+
+  it("maps a provider rejection to a safe gateway response without provider payloads", async () => {
+    (initializeBusinessCheckout as jest.Mock).mockRejectedValue(new BillingProviderError("REJECTED", "Paystack rejected the checkout request", 422, "Invalid configured test plan"));
+    const response = await request(app()).post("/api/subscription/checkout").set("Authorization", `Bearer ${owner}`).send({ planCode: "STARTER" });
+    expect(response.status).toBe(502);
+    expect(response.body).toEqual({
+      error: "Paystack could not initialize this checkout. Verify the configured plan and try again.",
+      code: "BILLING_PROVIDER_REJECTED",
+      providerStatus: 422,
+      providerMessage: "Invalid configured test plan",
+    });
   });
 
   it.each(["PAST_DUE", "SUSPENDED"])("allows the OWNER to initialize %s recovery without changing status", async () => {

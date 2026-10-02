@@ -8,11 +8,20 @@ const checkout = { id: "checkout_1", businessId: "biz_1", subscriptionId: "sub_1
 
 function setup({ existingEvent = null as any, initialCheckout = null as any, recurringSubscription = null as any } = {}) {
   jest.clearAllMocks();
+  jest.spyOn(console, "error").mockImplementation(() => undefined);
   (prisma.billingEvent.findUnique as jest.Mock).mockResolvedValue(existingEvent);
   (prisma.billingCheckout.findUnique as jest.Mock).mockResolvedValue(initialCheckout);
   (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(recurringSubscription);
-  (prisma.billingEvent.create as jest.Mock).mockResolvedValue({ id: "event_1" });
+  (prisma.billingEvent.create as jest.Mock).mockImplementation(async () => {
+    if (existingEvent) {
+      const error: any = new Error("Unique constraint");
+      error.code = "P2002";
+      throw error;
+    }
+    return { id: "event_1" };
+  });
   (prisma.billingEvent.update as jest.Mock).mockResolvedValue({});
+  (prisma.billingEvent.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
   (prisma.billingInvoice.upsert as jest.Mock).mockResolvedValue({});
   (prisma.subscription.update as jest.Mock).mockResolvedValue({});
   (prisma.billingCheckout.update as jest.Mock).mockResolvedValue({});
@@ -34,7 +43,7 @@ describe("persistent Paystack webhook correlation", () => {
   });
 
   it("treats an already-persisted subscription.create as a no-op", async () => {
-    setup({ existingEvent: { id: "event_existing" } });
+    setup({ existingEvent: { id: "event_existing", status: "PROCESSED" } });
     await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "subscription.create", providerEventId: "subscription.create:sub_code", providerReference: "sf_initial" })).resolves.toMatchObject({ duplicate: true });
     expect(prisma.subscription.update).not.toHaveBeenCalled();
   });
@@ -43,36 +52,36 @@ describe("persistent Paystack webhook correlation", () => {
     const authoritative = { ...subscription, providerSubscriptionId: "sub_authoritative" };
     setup({ initialCheckout: { ...checkout, subscription: authoritative } });
 
-    await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "subscription.create", providerEventId: "subscription.create:sub_replacement", providerReference: "sf_initial", providerSubscriptionId: "sub_replacement" })).resolves.toEqual({ handled: false, reason: "provider_identity_conflict" });
+    await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "subscription.create", providerEventId: "subscription.create:sub_replacement", providerReference: "sf_initial", providerSubscriptionId: "sub_replacement" })).resolves.toMatchObject({ handled: false, reason: "provider_identity_conflict" });
 
     expect(prisma.subscription.update).not.toHaveBeenCalled();
     expect(prisma.billingInvoice.upsert).not.toHaveBeenCalled();
-    expect(prisma.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: "provider_subscription_identity_conflict", previousValue: expect.stringContaining("sub_authoritative"), newValue: expect.stringContaining("sub_replacement") }) }));
-    expect(prisma.billingEvent.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED", failureCode: "PROVIDER_SUBSCRIPTION_CONFLICT" }) }));
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    expect(prisma.billingEvent.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "REJECTED", failureCode: "PROVIDER_SUBSCRIPTION_CONFLICT" }) }));
   });
 
   it("rejects a conflicting plan-based charge without invoicing, activating, or rewarding", async () => {
     const authoritative = { ...subscription, status: "PAST_DUE", providerSubscriptionId: "sub_authoritative" };
     setup({ initialCheckout: { ...checkout, subscription: authoritative } });
 
-    await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "charge.success", providerEventId: "charge.success:replacement", providerReference: "sf_initial", providerSubscriptionId: "sub_replacement", amount: 1_500_000, currency: "NGN" })).resolves.toEqual({ handled: false, reason: "provider_identity_conflict" });
+    await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "charge.success", providerEventId: "charge.success:replacement", providerReference: "sf_initial", providerSubscriptionId: "sub_replacement", amount: 1_500_000, currency: "NGN" })).resolves.toMatchObject({ handled: false, reason: "provider_identity_conflict" });
 
     expect(prisma.subscription.update).not.toHaveBeenCalled();
     expect(prisma.billingInvoice.upsert).not.toHaveBeenCalled();
     expect(prisma.billingCreditEntry.create).not.toHaveBeenCalled();
-    expect(prisma.billingEvent.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED", failureCode: "PROVIDER_SUBSCRIPTION_CONFLICT" }) }));
+    expect(prisma.billingEvent.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "REJECTED", failureCode: "PROVIDER_SUBSCRIPTION_CONFLICT" }) }));
   });
 
   it("treats a replayed persisted provider-identity conflict as a no-op", async () => {
-    setup({ existingEvent: { id: "event_conflict", status: "FAILED", failureCode: "PROVIDER_SUBSCRIPTION_CONFLICT" } });
-    await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "subscription.create", providerEventId: "subscription.create:sub_replacement", providerReference: "sf_initial", providerSubscriptionId: "sub_replacement" })).resolves.toEqual({ handled: true, duplicate: true });
+    setup({ existingEvent: { id: "event_conflict", status: "REJECTED", failureCode: "PROVIDER_SUBSCRIPTION_CONFLICT" } });
+    await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "subscription.create", providerEventId: "subscription.create:sub_replacement", providerReference: "sf_initial", providerSubscriptionId: "sub_replacement" })).resolves.toMatchObject({ handled: true, duplicate: true });
     expect(prisma.subscription.update).not.toHaveBeenCalled();
     expect(prisma.auditLog.create).not.toHaveBeenCalled();
   });
 
   it("does not let an unmatched replacement event mutate any tenant identity", async () => {
     setup();
-    await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "subscription.create", providerEventId: "subscription.create:unknown", providerReference: "unknown_checkout", providerSubscriptionId: "sub_other" })).resolves.toEqual({ handled: false, reason: "correlation" });
+    await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "subscription.create", providerEventId: "subscription.create:unknown", providerReference: "unknown_checkout", providerSubscriptionId: "sub_other" })).resolves.toMatchObject({ handled: false, reason: "correlation" });
     expect(prisma.subscription.update).not.toHaveBeenCalled();
     expect(prisma.subscription.findFirst).toHaveBeenCalledWith({ where: { provider: "PAYSTACK", providerSubscriptionId: "sub_other" } });
   });
@@ -97,6 +106,37 @@ describe("persistent Paystack webhook correlation", () => {
     expect(prisma.billingCreditEntry.create).not.toHaveBeenCalled();
   });
 
+  it("persists a normalized Paystack customer code on an initial charge without subscription timing", async () => {
+    const initialStarterSubscription = { ...subscription, planCode: "STARTER", providerPlanCode: "PLN_STARTER" };
+    const initialStarterCheckout = { ...checkout, planCode: "STARTER", providerPlanCode: "PLN_STARTER", amount: 1_000_000, subscription: initialStarterSubscription };
+    setup({ initialCheckout: initialStarterCheckout });
+
+    await expect(processVerifiedPaystackEvent({
+      provider: "PAYSTACK",
+      eventType: "charge.success",
+      providerEventId: "charge.success:initial_starter",
+      providerReference: "sf_initial",
+      amount: 1_000_000,
+      currency: "NGN",
+      providerCustomerId: "CUS_INITIAL_TEST",
+      providerPlanCode: "PLN_STARTER",
+      // Initial Paystack charge.success observations do not include either
+      // providerSubscriptionId or currentPeriodEndsAt.
+    })).resolves.toMatchObject({ handled: true, duplicate: false });
+
+    expect(prisma.billingInvoice.upsert).toHaveBeenCalledTimes(1);
+    expect(prisma.subscription.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        status: "ACTIVE",
+        providerCustomerId: "CUS_INITIAL_TEST",
+        providerPlanCode: "PLN_STARTER",
+        providerSubscriptionId: null,
+        currentPeriodEndsAt: null,
+      }),
+    }));
+    expect(prisma.billingCheckout.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "COMPLETED" }) }));
+  });
+
   it("moves a recurring provider-matched payment failure to PAST_DUE without suspension", async () => {
     const activeSubscription = { ...subscription, status: "ACTIVE", providerSubscriptionId: "sub_code" };
     setup({ recurringSubscription: activeSubscription });
@@ -115,11 +155,61 @@ describe("persistent Paystack webhook correlation", () => {
   });
 
   it("does not repeat billing work when a BillingEvent already exists", async () => {
-    setup({ existingEvent: { id: "event_existing" } });
+    setup({ existingEvent: { id: "event_existing", status: "PROCESSED" } });
     await processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "charge.success", providerEventId: "charge.success:txn_1", providerSubscriptionId: "sub_code" });
     expect(prisma.subscription.update).not.toHaveBeenCalled();
     expect(prisma.billingInvoice.upsert).not.toHaveBeenCalled();
     expect(prisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("retries the same FAILED event row and completes it without duplicating billing work", async () => {
+    setup({ initialCheckout: checkout });
+    (prisma.billingInvoice.upsert as jest.Mock).mockRejectedValueOnce(new Error("temporary invoice failure"));
+    await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "charge.success", providerEventId: "charge.success:retryable", providerReference: "sf_initial", amount: 1_500_000, currency: "NGN" })).resolves.toMatchObject({ retryable: true });
+    expect(prisma.billingEvent.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED", failureStage: "invoice_upsert" }) }));
+
+    setup({ existingEvent: { id: "event_1", status: "FAILED", processingStartedAt: null }, initialCheckout: checkout });
+    await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "charge.success", providerEventId: "charge.success:retryable", providerReference: "sf_initial", amount: 1_500_000, currency: "NGN" })).resolves.toMatchObject({ handled: true, duplicate: false });
+    expect(prisma.billingInvoice.upsert).toHaveBeenCalledTimes(1);
+    expect(prisma.billingCheckout.update).toHaveBeenCalledTimes(1);
+    expect(prisma.billingEvent.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: "event_1", status: { in: ["FAILED", "RECEIVED"] } }) }));
+  });
+
+  it("keeps a retryable event FAILED when its retry fails again with bounded diagnostics", async () => {
+    setup({ existingEvent: { id: "event_1", status: "FAILED", processingStartedAt: null }, initialCheckout: checkout });
+    (prisma.billingInvoice.upsert as jest.Mock).mockRejectedValueOnce(new Error("temporary invoice failure"));
+    await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "charge.success", providerEventId: "charge.success:retry-fails", providerReference: "sf_initial", amount: 1_500_000, currency: "NGN" })).resolves.toMatchObject({ retryable: true });
+    expect(prisma.billingEvent.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED", failureCode: "PROCESSING_FAILED", failureStage: "invoice_upsert" }) }));
+  });
+
+  it("does not reclaim an active PROCESSING delivery", async () => {
+    setup({ existingEvent: { id: "event_1", status: "PROCESSING", processingStartedAt: new Date() }, initialCheckout: checkout });
+    (prisma.billingEvent.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
+    await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "charge.success", providerEventId: "charge.success:in-flight", providerReference: "sf_initial", amount: 1_500_000, currency: "NGN" })).resolves.toMatchObject({ handled: true, duplicate: true, reason: "processing" });
+    expect(prisma.billingInvoice.upsert).not.toHaveBeenCalled();
+  });
+
+  it("allows only one concurrent FAILED retry claimant to run side effects", async () => {
+    setup({ existingEvent: { id: "event_1", status: "FAILED", processingStartedAt: null }, initialCheckout: checkout });
+    (prisma.billingEvent.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
+    await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "charge.success", providerEventId: "charge.success:failed-race", providerReference: "sf_initial", amount: 1_500_000, currency: "NGN" })).resolves.toMatchObject({ handled: true, duplicate: true, reason: "processing" });
+    expect(prisma.billingInvoice.upsert).not.toHaveBeenCalled();
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+    expect(prisma.billingCheckout.update).not.toHaveBeenCalled();
+  });
+
+  it("atomically reclaims only a stale PROCESSING delivery", async () => {
+    setup({ existingEvent: { id: "event_1", status: "PROCESSING", processingStartedAt: new Date(Date.now() - 6 * 60_000) }, initialCheckout: checkout });
+    await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "charge.success", providerEventId: "charge.success:stale", providerReference: "sf_initial", amount: 1_500_000, currency: "NGN" })).resolves.toMatchObject({ handled: true, duplicate: false });
+    expect(prisma.billingEvent.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ status: "PROCESSING", processingStartedAt: expect.objectContaining({ lte: expect.any(Date) }) }) }));
+    expect(prisma.billingInvoice.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("never retries a terminal REJECTED event", async () => {
+    setup({ existingEvent: { id: "event_1", status: "REJECTED", failureCode: "VALIDATION_FAILED" }, initialCheckout: checkout });
+    await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "charge.success", providerEventId: "charge.success:rejected", providerReference: "sf_initial", amount: 1_500_000, currency: "NGN" })).resolves.toMatchObject({ handled: true, duplicate: true, reason: "rejected" });
+    expect(prisma.billingInvoice.upsert).not.toHaveBeenCalled();
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
   });
 });
 
@@ -152,5 +242,6 @@ describe("plan-based checkout safety", () => {
     await expect(initializeBusinessCheckout({ businessId: "biz_1", actorUserId: "owner_1", planCode: "GROWTH", provider })).resolves.toEqual({ authorizationUrl: "https://checkout.test", accessCode: "access", reference: "sf_reference" });
     expect(prisma.billingCheckout.create).toHaveBeenCalledTimes(1);
     expect(provider.initializeCheckout).toHaveBeenCalledTimes(1);
+    expect(provider.initializeCheckout).toHaveBeenCalledWith(expect.objectContaining({ planCode: "GROWTH", amount: 1_500_000 }));
   });
 });

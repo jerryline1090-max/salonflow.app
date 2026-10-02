@@ -14,6 +14,10 @@ export class BillingProviderError extends Error {
   constructor(
     public readonly kind: BillingProviderErrorKind,
     message: string,
+    /** Safe diagnostic metadata; never contains provider credentials or payloads. */
+    public readonly providerStatus?: number,
+    /** Allowlisted top-level provider message, normalized and length-limited. */
+    public readonly providerMessage?: string,
   ) {
     super(message);
     this.name = "BillingProviderError";
@@ -25,6 +29,8 @@ export interface InitializeCheckoutInput {
   reference: string;
   email: string;
   planCode: PlanCode;
+  /** Server plan configuration in kobo; required by Paystack initialization. */
+  amount: number;
   metadata: { checkoutId: string; checkoutReference: string; businessId: string; subscriptionId: string; planCode: PlanCode };
   callbackUrl?: string;
 }

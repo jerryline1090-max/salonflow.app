@@ -57,6 +57,7 @@ export async function initializeBusinessCheckout(input: {
       reference,
       email: business.users[0].email,
       planCode: input.planCode,
+      amount: plan.monthlyPriceMinor,
       metadata: { checkoutId: checkout.id, checkoutReference: reference, businessId: business.id, subscriptionId: business.subscription.id, planCode: input.planCode },
     });
     await prisma.auditLog.create({ data: { businessId: business.id, actorUserId: input.actorUserId, actorType: "USER", resource: "billing", resourceId: checkout.id, action: "checkout_initiated", newValue: JSON.stringify({ planCode: input.planCode, reference }) } });
@@ -113,13 +114,101 @@ export async function reconcileKnownSubscription(businessId: string, provider: B
   return { reconciled: true as const, changed: true };
 }
 
-export async function processVerifiedPaystackEvent(event: NormalizedBillingEvent) {
-  if (event.provider !== "PAYSTACK" || !["charge.success", "invoice.payment_failed", "subscription.create"].includes(event.eventType)) {
-    return { handled: false, reason: "unsupported" as const };
+const BILLING_EVENT_LEASE_MS = 5 * 60_000;
+
+class LostBillingEventClaimError extends Error {}
+
+type BillingEventClaim =
+  | { kind: "claimed"; id: string; token: string }
+  | { kind: "processed" | "rejected" | "processing" };
+
+function isUniqueViolation(error: unknown) {
+  return Boolean(error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002");
+}
+
+function failureCodeFor(error: unknown) {
+  const name = error instanceof Error ? error.name : "UnknownError";
+  return name.includes("PrismaClient") ? "DATABASE_UNAVAILABLE" : "PROCESSING_FAILED";
+}
+
+async function claimBillingEvent(event: NormalizedBillingEvent): Promise<BillingEventClaim> {
+  const now = new Date();
+  const token = randomUUID();
+  try {
+    const created = await prisma.billingEvent.create({
+      data: { provider: BillingProvider.PAYSTACK, providerEventId: event.providerEventId, eventType: event.eventType, status: BillingEventStatus.PROCESSING, processingStartedAt: now, processingToken: token },
+    });
+    return { kind: "claimed", id: created.id, token };
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
   }
 
   const existing = await prisma.billingEvent.findUnique({ where: { provider_providerEventId: { provider: BillingProvider.PAYSTACK, providerEventId: event.providerEventId } } });
-  if (existing) return { handled: true, duplicate: true };
+  if (!existing) throw new LostBillingEventClaimError();
+  if (existing.status === BillingEventStatus.PROCESSED) return { kind: "processed" };
+  if (existing.status === BillingEventStatus.REJECTED) return { kind: "rejected" };
+
+  const staleBefore = new Date(now.getTime() - BILLING_EVENT_LEASE_MS);
+  const retryableStatuses = existing.status === BillingEventStatus.PROCESSING
+    ? undefined
+    : { in: [BillingEventStatus.FAILED, BillingEventStatus.RECEIVED] };
+  const where = existing.status === BillingEventStatus.PROCESSING
+    ? { id: existing.id, status: BillingEventStatus.PROCESSING, processingStartedAt: { lte: staleBefore } }
+    : { id: existing.id, status: retryableStatuses };
+  const claimed = await prisma.billingEvent.updateMany({
+    where,
+    data: { status: BillingEventStatus.PROCESSING, processingStartedAt: now, processingToken: token, processedAt: null, failureCode: null, failureStage: null },
+  });
+  return claimed.count === 1 ? { kind: "claimed", id: existing.id, token } : { kind: "processing" };
+}
+
+async function rejectClaim(claim: Extract<BillingEventClaim, { kind: "claimed" }>, data: { businessId?: string; failureCode: string; failureStage: string }) {
+  const rejected = await prisma.billingEvent.updateMany({
+    where: { id: claim.id, status: BillingEventStatus.PROCESSING, processingToken: claim.token },
+    data: { status: BillingEventStatus.REJECTED, businessId: data.businessId, failureCode: data.failureCode, failureStage: data.failureStage, processedAt: new Date(), processingToken: null },
+  });
+  if (rejected.count !== 1) throw new LostBillingEventClaimError();
+}
+
+async function failClaim(claim: Extract<BillingEventClaim, { kind: "claimed" }>, data: { businessId?: string; failureCode: string; failureStage: string }) {
+  const failed = await prisma.billingEvent.updateMany({
+    where: { id: claim.id, status: BillingEventStatus.PROCESSING, processingToken: claim.token },
+    data: { status: BillingEventStatus.FAILED, businessId: data.businessId, failureCode: data.failureCode, failureStage: data.failureStage, processedAt: new Date(), processingToken: null },
+  });
+  return failed.count === 1;
+}
+
+async function persistTerminalOutcome(claim: Extract<BillingEventClaim, { kind: "claimed" }>, data: { businessId?: string; failureCode: string; failureStage: string }, event: NormalizedBillingEvent) {
+  try {
+    await rejectClaim(claim, data);
+    return true;
+  } catch (error) {
+    const failureCode = failureCodeFor(error);
+    console.error("[billing] terminal webhook outcome could not be persisted", { providerEventId: event.providerEventId, eventType: event.eventType, stage: data.failureStage, name: error instanceof Error ? error.name : "UnknownError", failureCode });
+    try { await failClaim(claim, { businessId: data.businessId, failureCode, failureStage: data.failureStage }); } catch { /* Returning 503 asks the provider to retry the same event. */ }
+    return false;
+  }
+}
+
+/**
+ * Processes a verified provider event under one durable event claim. Five
+ * minutes is deliberately longer than the provider's 30-second timeout so a
+ * concurrent delivery cannot steal an active transaction, while a crashed
+ * worker can eventually be reclaimed by a later delivery.
+ */
+export async function processVerifiedPaystackEvent(event: NormalizedBillingEvent) {
+  if (event.provider !== "PAYSTACK" || !["charge.success", "invoice.payment_failed", "subscription.create"].includes(event.eventType)) {
+    return { handled: false, retryable: false, reason: "unsupported" as const };
+  }
+
+  let claim: BillingEventClaim;
+  try {
+    claim = await claimBillingEvent(event);
+  } catch (error) {
+    console.error("[billing] event claim failed", { providerEventId: event.providerEventId, eventType: event.eventType, name: error instanceof Error ? error.name : "UnknownError", failureCode: failureCodeFor(error) });
+    return { handled: false, retryable: true, reason: "claim" as const };
+  }
+  if (claim.kind !== "claimed") return { handled: true, retryable: false, duplicate: true, reason: claim.kind };
 
   const checkout = event.providerReference ? await prisma.billingCheckout.findUnique({ where: { reference: event.providerReference }, include: { subscription: true } }) : null;
   const recurringSubscription = !checkout && event.providerSubscriptionId
@@ -128,80 +217,63 @@ export async function processVerifiedPaystackEvent(event: NormalizedBillingEvent
   const subscription = checkout?.subscription ?? recurringSubscription;
   const businessId = checkout?.businessId ?? subscription?.businessId;
   if (!subscription || !businessId) {
-    await recordFailedEvent(event, "CORRELATION_FAILED");
-    return { handled: false, reason: "correlation" as const };
+    const persisted = await persistTerminalOutcome(claim, { failureCode: "CORRELATION_FAILED", failureStage: "correlation" }, event);
+    return persisted ? { handled: false, retryable: false, reason: "correlation" as const } : { handled: false, retryable: true, reason: "processing" as const };
   }
   const expected = checkout ? { amount: checkout.amount, currency: checkout.currency, planCode: checkout.planCode, providerPlanCode: checkout.providerPlanCode } : { amount: getPlanDefinition(subscription.planCode).monthlyPriceMinor, currency: getPlanDefinition(subscription.planCode).currency, planCode: subscription.planCode, providerPlanCode: subscription.providerPlanCode ?? undefined };
   if ((event.amount !== undefined && event.amount !== expected.amount) || (event.currency && event.currency !== expected.currency)) {
-    await recordFailedEvent(event, "VALIDATION_FAILED", businessId);
-    return { handled: false, reason: "validation" as const };
+    const persisted = await persistTerminalOutcome(claim, { businessId, failureCode: "VALIDATION_FAILED", failureStage: "validation" }, event);
+    return persisted ? { handled: false, retryable: false, reason: "validation" as const } : { handled: false, retryable: true, reason: "processing" as const };
+  }
+  if (hasProviderSubscriptionConflict(subscription, event)) {
+    const persisted = await persistTerminalOutcome(claim, { businessId, failureCode: "PROVIDER_SUBSCRIPTION_CONFLICT", failureStage: "provider_identity_conflict" }, event);
+    return persisted ? { handled: false, retryable: false, reason: "provider_identity_conflict" as const } : { handled: false, retryable: true, reason: "processing" as const };
   }
 
+  let processingStage = "transaction_start";
   try {
     return await prisma.$transaction(async (tx) => {
-      const duplicate = await tx.billingEvent.findUnique({ where: { provider_providerEventId: { provider: BillingProvider.PAYSTACK, providerEventId: event.providerEventId } } });
-      if (duplicate) return { handled: true, duplicate: true };
-      const billingEvent = await tx.billingEvent.create({ data: { provider: BillingProvider.PAYSTACK, providerEventId: event.providerEventId, eventType: event.eventType, businessId, status: BillingEventStatus.RECEIVED } });
-      if (hasProviderSubscriptionConflict(subscription, event)) {
-        // A server-created checkout can correlate an incoming event, but it is
-        // not proof that a second provider subscription safely replaced the
-        // existing one. Preserve the first authoritative identity and route
-        // the discrepancy to reconciliation instead of guessing.
-        await tx.auditLog.create({
-          data: {
-            businessId,
-            actorType: "SYSTEM",
-            resource: "billing",
-            resourceId: subscription.id,
-            action: "provider_subscription_identity_conflict",
-            previousValue: JSON.stringify({ providerSubscriptionId: subscription.providerSubscriptionId }),
-            newValue: JSON.stringify({ providerSubscriptionId: event.providerSubscriptionId, eventType: event.eventType }),
-          },
-        });
-        await tx.billingEvent.update({ where: { id: billingEvent.id }, data: { status: BillingEventStatus.FAILED, failureCode: "PROVIDER_SUBSCRIPTION_CONFLICT", processedAt: new Date() } });
-        return { handled: false, reason: "provider_identity_conflict" as const };
-      }
+      processingStage = "claim_context";
+      const owned = await tx.billingEvent.updateMany({ where: { id: claim.id, status: BillingEventStatus.PROCESSING, processingToken: claim.token }, data: { businessId } });
+      if (owned.count !== 1) throw new LostBillingEventClaimError();
       const occurredAt = event.occurredAt ?? new Date();
       if (event.eventType === "subscription.create") {
-        // Identity only: verified creation is not proof of a paid charge.
+        processingStage = "subscription_identity";
         await tx.subscription.update({ where: { id: subscription.id }, data: { provider: BillingProvider.PAYSTACK, providerCustomerId: event.providerCustomerId ?? subscription.providerCustomerId, providerSubscriptionId: event.providerSubscriptionId ?? subscription.providerSubscriptionId, providerPlanCode: event.providerPlanCode ?? subscription.providerPlanCode } });
       } else if (event.eventType === "charge.success") {
-        await tx.billingInvoice.upsert({
-          where: { provider_providerReference: { provider: BillingProvider.PAYSTACK, providerReference: event.providerReference! } },
-          create: { businessId, subscriptionId: subscription.id, provider: BillingProvider.PAYSTACK, providerReference: event.providerReference ?? event.providerEventId, amount: expected.amount, currency: expected.currency, status: BillingInvoiceStatus.PAID, paidAt: occurredAt, occurredAt },
-          update: { status: BillingInvoiceStatus.PAID, paidAt: occurredAt, occurredAt },
-        });
+        processingStage = "invoice_upsert";
+        await tx.billingInvoice.upsert({ where: { provider_providerReference: { provider: BillingProvider.PAYSTACK, providerReference: event.providerReference! } }, create: { businessId, subscriptionId: subscription.id, provider: BillingProvider.PAYSTACK, providerReference: event.providerReference ?? event.providerEventId, amount: expected.amount, currency: expected.currency, status: BillingInvoiceStatus.PAID, paidAt: occurredAt, occurredAt }, update: { status: BillingInvoiceStatus.PAID, paidAt: occurredAt, occurredAt } });
+        processingStage = "subscription_activation";
         await tx.subscription.update({ where: { id: subscription.id }, data: { status: SubscriptionStatus.ACTIVE, planCode: expected.planCode, provider: BillingProvider.PAYSTACK, providerCustomerId: event.providerCustomerId ?? subscription.providerCustomerId, providerSubscriptionId: event.providerSubscriptionId ?? subscription.providerSubscriptionId, providerPlanCode: event.providerPlanCode ?? expected.providerPlanCode, currentPeriodEndsAt: event.currentPeriodEndsAt ?? subscription.currentPeriodEndsAt, graceEndsAt: null, pastDueEndsAt: null } });
-        // A reward is created only after the same verified charge has been
-        // correlated and has activated the referred business. Replays are
-        // independently blocked by BillingEvent and Referral status.
+        processingStage = "referral_reward";
         await rewardReferralForVerifiedPayment(businessId, tx);
-        if (checkout) await tx.billingCheckout.update({ where: { id: checkout.id }, data: { status: "COMPLETED", completedAt: occurredAt } });
+        if (checkout) { processingStage = "checkout_completion"; await tx.billingCheckout.update({ where: { id: checkout.id }, data: { status: "COMPLETED", completedAt: occurredAt } }); }
+        processingStage = "activation_audit";
         await tx.auditLog.create({ data: { businessId, actorType: "SYSTEM", resource: "billing", resourceId: subscription.id, action: "subscription_activated", newValue: JSON.stringify({ planCode: expected.planCode, reference: event.providerReference }) } });
       } else if (subscription.status === SubscriptionStatus.ACTIVE || subscription.status === SubscriptionStatus.PAST_DUE) {
-        await tx.billingInvoice.upsert({
-          where: { provider_providerReference: { provider: BillingProvider.PAYSTACK, providerReference: event.providerReference! } },
-          create: { businessId, subscriptionId: subscription.id, provider: BillingProvider.PAYSTACK, providerReference: event.providerReference ?? event.providerEventId, amount: expected.amount, currency: expected.currency, status: BillingInvoiceStatus.FAILED, occurredAt },
-          update: { status: BillingInvoiceStatus.FAILED, paidAt: null, occurredAt },
-        });
+        processingStage = "failure_invoice_upsert";
+        await tx.billingInvoice.upsert({ where: { provider_providerReference: { provider: BillingProvider.PAYSTACK, providerReference: event.providerReference! } }, create: { businessId, subscriptionId: subscription.id, provider: BillingProvider.PAYSTACK, providerReference: event.providerReference ?? event.providerEventId, amount: expected.amount, currency: expected.currency, status: BillingInvoiceStatus.FAILED, occurredAt }, update: { status: BillingInvoiceStatus.FAILED, paidAt: null, occurredAt } });
+        processingStage = "past_due_transition";
         await tx.subscription.update({ where: { id: subscription.id }, data: { status: SubscriptionStatus.PAST_DUE, pastDueEndsAt: new Date(occurredAt.getTime() + Number(process.env.PAST_DUE_RECOVERY_DAYS ?? 3) * 86400000), provider: BillingProvider.PAYSTACK, providerCustomerId: event.providerCustomerId ?? subscription.providerCustomerId, providerSubscriptionId: event.providerSubscriptionId ?? subscription.providerSubscriptionId, providerPlanCode: event.providerPlanCode ?? expected.providerPlanCode } });
+        processingStage = "failure_audit";
         await tx.auditLog.create({ data: { businessId, actorType: "SYSTEM", resource: "billing", resourceId: subscription.id, action: "subscription_payment_failed", newValue: JSON.stringify({ reference: event.providerReference }) } });
       } else {
         throw new BillingCorrelationError("Payment failure is not tied to an active paid subscription");
       }
-      await tx.billingEvent.update({ where: { id: billingEvent.id }, data: { status: BillingEventStatus.PROCESSED, processedAt: new Date() } });
-      return { handled: true, duplicate: false };
+      processingStage = "event_processed";
+      const completed = await tx.billingEvent.updateMany({ where: { id: claim.id, status: BillingEventStatus.PROCESSING, processingToken: claim.token }, data: { status: BillingEventStatus.PROCESSED, processedAt: new Date(), processingToken: null, failureCode: null, failureStage: null } });
+      if (completed.count !== 1) throw new LostBillingEventClaimError();
+      return { handled: true, retryable: false, duplicate: false };
     });
   } catch (error) {
-    await recordFailedEvent(event, error instanceof BillingCorrelationError ? "CORRELATION_FAILED" : "PROCESSING_FAILED", businessId);
-    return { handled: false, reason: "processing" as const };
-  }
-}
-
-async function recordFailedEvent(event: NormalizedBillingEvent, failureCode: string, businessId?: string) {
-  try {
-    await prisma.billingEvent.create({ data: { provider: BillingProvider.PAYSTACK, providerEventId: event.providerEventId, eventType: event.eventType, businessId, status: BillingEventStatus.FAILED, failureCode, processedAt: new Date() } });
-  } catch {
-    // A concurrent delivery already owns this idempotency key; never retry a mutation here.
+    if (error instanceof LostBillingEventClaimError) return { handled: true, retryable: false, duplicate: true, reason: "processing" as const };
+    if (error instanceof BillingCorrelationError) {
+      const persisted = await persistTerminalOutcome(claim, { businessId, failureCode: "CORRELATION_FAILED", failureStage: processingStage }, event);
+      return persisted ? { handled: false, retryable: false, reason: "correlation" as const } : { handled: false, retryable: true, reason: "processing" as const };
+    }
+    const failureCode = failureCodeFor(error);
+    console.error("[billing] verified Paystack event processing failed", { providerEventId: event.providerEventId, eventType: event.eventType, stage: processingStage, name: error instanceof Error ? error.name : "UnknownError", failureCode, stack: process.env.NODE_ENV === "development" && error instanceof Error ? error.stack?.slice(0, 2_000) : undefined });
+    await failClaim(claim, { businessId, failureCode, failureStage: processingStage });
+    return { handled: false, retryable: true, reason: "processing" as const };
   }
 }

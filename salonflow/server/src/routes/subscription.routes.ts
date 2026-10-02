@@ -4,6 +4,7 @@ import { getBusinessSubscription, resolveBusinessAccess, summarizeSubscription }
 import { PlanCode } from "@prisma/client";
 import { BillingCorrelationError, getBillingHistory, initializeBusinessCheckout, scheduleCancellation, undoScheduledCancellation } from "../modules/billing/billingService";
 import { createPaystackProvider } from "../modules/billing/paystack/paystackProviderFactory";
+import { BillingProviderError } from "../modules/billing/billingProvider";
 
 export const subscriptionRouter = Router();
 
@@ -65,6 +66,18 @@ subscriptionRouter.post("/checkout", async (req, res, next) => {
   } catch (error) {
     if (error instanceof BillingCorrelationError) {
       return res.status(409).json({ error: error.message });
+    }
+    if (error instanceof BillingProviderError) {
+      console.error("Paystack checkout failed", { kind: error.kind, providerStatus: error.providerStatus, providerMessage: error.providerMessage });
+      const status = error.kind === "CONFIGURATION" ? 503 : error.kind === "TIMEOUT" ? 504 : 502;
+      return res.status(status).json({
+        error: "Paystack could not initialize this checkout. Verify the configured plan and try again.",
+        code: `BILLING_PROVIDER_${error.kind}`,
+        ...(error.providerStatus ? { providerStatus: error.providerStatus } : {}),
+        // The adapter allowlists only Paystack's bounded top-level message.
+        // Keep this diagnostic available locally, never in production responses.
+        ...(process.env.NODE_ENV !== "production" && error.providerMessage ? { providerMessage: error.providerMessage } : {}),
+      });
     }
     next(error);
   }

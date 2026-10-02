@@ -28,6 +28,23 @@ export interface PaystackHttpClient {
 }
 
 /**
+ * Paystack exposes a stable string customer_code alongside a sometimes numeric
+ * customer id. Keep this provider-specific normalization in one place and
+ * never infer identity from customer email or arbitrary payload fields.
+ */
+function extractPaystackCustomerIdentity(data: Record<string, unknown>): string | undefined {
+  const customer = typeof data.customer === "object" && data.customer !== null
+    ? data.customer as Record<string, unknown>
+    : undefined;
+  const customerCode = customer?.customer_code;
+  if (typeof customerCode === "string" && customerCode.trim()) return customerCode.trim();
+  const customerId = customer?.id;
+  if (typeof customerId === "string" && customerId.trim()) return customerId.trim();
+  if (typeof customerId === "number" && Number.isFinite(customerId)) return String(customerId);
+  return undefined;
+}
+
+/**
  * This adapter can be unit-tested through PaystackHttpClient. The concrete
  * network client is deliberately deferred until checkout route wiring, so this
  * foundation never creates a provider request merely by being configured.
@@ -51,7 +68,7 @@ export class PaystackAdapter implements BillingProviderAdapter {
       const next = typeof data.next_payment_date === "string" ? new Date(data.next_payment_date) : undefined;
       return {
         providerSubscriptionId: data.subscription_code,
-        providerCustomerId: typeof data.customer === "object" && data.customer !== null && typeof (data.customer as Record<string, unknown>).id === "string" ? (data.customer as Record<string, string>).id : undefined,
+        providerCustomerId: extractPaystackCustomerIdentity(data),
         providerPlanCode: typeof data.plan === "object" && data.plan !== null && typeof (data.plan as Record<string, unknown>).plan_code === "string" ? (data.plan as Record<string, string>).plan_code : undefined,
         status: data.status === "active" ? "ACTIVE" as const : data.status === "cancelled" ? "CANCELLED" as const : data.status === "past_due" ? "PAST_DUE" as const : undefined,
         currentPeriodEndsAt: next && !Number.isNaN(next.getTime()) ? next : undefined,
@@ -69,6 +86,9 @@ export class PaystackAdapter implements BillingProviderAdapter {
         "/transaction/initialize",
         {
           email: input.email,
+          // Paystack requires this transaction amount even when the configured
+          // recurring plan remains authoritative for the eventual debit.
+          amount: String(input.amount),
           // The mapping is server configuration, never a browser-supplied value.
           plan: this.getPlanCode(input.planCode),
           reference: input.reference,
@@ -128,7 +148,7 @@ export class PaystackAdapter implements BillingProviderAdapter {
       occurredAt: paidAt && !Number.isNaN(paidAt.getTime()) ? paidAt : undefined,
       amount,
       currency,
-      providerCustomerId: typeof event.data?.customer === "object" && event.data.customer !== null && typeof (event.data.customer as Record<string, unknown>).id === "string" ? (event.data.customer as Record<string, string>).id : typeof event.data?.customer_code === "string" ? event.data.customer_code : undefined,
+      providerCustomerId: extractPaystackCustomerIdentity(event.data ?? {}),
       providerSubscriptionId: typeof event.data?.subscription_code === "string" ? event.data.subscription_code : typeof event.data?.subscription === "object" && event.data.subscription !== null && typeof (event.data.subscription as Record<string, unknown>).subscription_code === "string" ? (event.data.subscription as Record<string, string>).subscription_code : undefined,
       providerPlanCode: typeof event.data?.plan === "object" && event.data.plan !== null && typeof (event.data.plan as Record<string, unknown>).plan_code === "string" ? (event.data.plan as Record<string, string>).plan_code : undefined,
       currentPeriodEndsAt: periodEnd && !Number.isNaN(periodEnd.getTime()) ? periodEnd : undefined,

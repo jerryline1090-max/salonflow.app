@@ -20,7 +20,10 @@ webhooksRouter.post("/paystack", async (req, res) => {
     const event = provider.normalizeWebhookEvent(req.body);
     if (!event) return res.sendStatus(200); // unsupported/malformed events are safely acknowledged
     const result = await processVerifiedPaystackEvent(event);
-    return res.status(result.handled ? 200 : 202).json({ received: true, duplicate: "duplicate" in result && result.duplicate === true });
+    // A transient processing failure must be non-2xx so Paystack can retry.
+    // Permanent validation/correlation outcomes are acknowledged intentionally.
+    if (result.retryable) return res.status(503).json({ error: "Webhook processing is temporarily unavailable" });
+    return res.status(200).json({ received: true, duplicate: "duplicate" in result && result.duplicate === true });
   } catch {
     // Do not expose provider or billing details to an unauthenticated caller.
     return res.status(500).json({ error: "Webhook processing failed" });
