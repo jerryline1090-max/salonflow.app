@@ -18,6 +18,9 @@ export class BillingProviderError extends Error {
     public readonly providerStatus?: number,
     /** Allowlisted top-level provider message, normalized and length-limited. */
     public readonly providerMessage?: string,
+    /** Only the provider's boolean top-level status, never arbitrary data. */
+    public readonly providerResponseStatus?: boolean,
+    public readonly rejectionCategory?: "STATE_CONFLICT" | "CREDENTIAL_INVALID",
   ) {
     super(message);
     this.name = "BillingProviderError";
@@ -51,6 +54,8 @@ export interface NormalizedBillingEvent {
   currency?: string;
   providerCustomerId?: string;
   providerSubscriptionId?: string;
+  /** Provider-only credential used for subscription enable/disable. Never client-visible. */
+  providerEmailToken?: string;
   providerPlanCode?: string;
   currentPeriodEndsAt?: Date;
 }
@@ -58,10 +63,43 @@ export interface NormalizedBillingEvent {
 export interface ProviderSubscriptionState {
   providerSubscriptionId: string;
   providerCustomerId?: string;
+  providerEmailToken?: string;
   providerPlanCode?: string;
   currentPeriodEndsAt?: Date;
-  status?: "ACTIVE" | "CANCELLED" | "PAST_DUE";
+  status?: "ACTIVE" | "NON_RENEWING" | "CANCELLED" | "PAST_DUE";
 }
+
+export interface InitialPaymentEvidence {
+  reference: string;
+  amount: number;
+  currency: string;
+  providerCustomerId: string;
+  providerPlanCode: string;
+}
+
+/** Server-only verified provider evidence. Never a client DTO. */
+export interface VerifiedInitialPayment extends InitialPaymentEvidence {
+  transactionId: string;
+  paidAt: Date;
+  domain: "test" | "live";
+  integrationId?: string;
+  /** Optional transaction plan ID; missing plan data is valid. */
+  providerPlanId?: string;
+}
+
+export interface DiscoveredSubscription {
+  providerSubscriptionId: string;
+  providerEmailToken: string;
+  providerCustomerId: string;
+  providerPlanCode: string;
+  createdAt: Date;
+  currentPeriodEndsAt: Date;
+  status: "ACTIVE" | "NON_RENEWING";
+}
+
+export type SubscriptionDiscovery =
+  | { outcome: "exactly_one"; candidate: DiscoveredSubscription }
+  | { outcome: "not_found" | "ambiguous" };
 
 /**
  * Provider boundary. Checkout, signature verification, webhook normalization,
@@ -72,6 +110,9 @@ export interface BillingProviderAdapter {
   verifyWebhookSignature(rawBody: Buffer, signature?: string): boolean;
   normalizeWebhookEvent(payload: unknown): NormalizedBillingEvent | null;
   getSubscriptionState?(providerSubscriptionId: string): Promise<ProviderSubscriptionState | null>;
-  cancelSubscription?(providerSubscriptionId: string): Promise<void>;
+  verifyInitialPayment?(input: InitialPaymentEvidence): Promise<VerifiedInitialPayment>;
+  discoverSubscriptions?(payment: VerifiedInitialPayment): Promise<SubscriptionDiscovery>;
+  disableSubscription?(input: { providerSubscriptionId: string; providerEmailToken: string }): Promise<void>;
+  enableSubscription?(input: { providerSubscriptionId: string; providerEmailToken: string }): Promise<void>;
   getPlanCode?(planCode: PlanCode): string;
 }

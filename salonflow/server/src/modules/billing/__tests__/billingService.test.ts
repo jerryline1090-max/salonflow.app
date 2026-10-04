@@ -3,7 +3,7 @@ jest.mock("../../../lib/prisma");
 import { prisma } from "../../../lib/prisma";
 import { initializeBusinessCheckout, processVerifiedPaystackEvent } from "../billingService";
 
-const subscription = { id: "sub_1", businessId: "biz_1", planCode: "GROWTH", status: "TRIALING", provider: "PAYSTACK", providerCustomerId: null, providerSubscriptionId: null, providerPlanCode: "PLN_GROWTH", trialEndsAt: null, graceEndsAt: null, currentPeriodEndsAt: null, cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date() };
+const subscription = { id: "sub_1", businessId: "biz_1", planCode: "GROWTH", status: "TRIALING", provider: "PAYSTACK", providerCustomerId: null, providerSubscriptionId: null, providerEmailToken: null, providerPlanCode: "PLN_GROWTH", trialEndsAt: null, graceEndsAt: null, currentPeriodEndsAt: null, cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date() };
 const checkout = { id: "checkout_1", businessId: "biz_1", subscriptionId: "sub_1", provider: "PAYSTACK", reference: "sf_initial", planCode: "GROWTH", providerPlanCode: "PLN_GROWTH", amount: 1_500_000, currency: "NGN", status: "INITIALIZED", subscription };
 
 function setup({ existingEvent = null as any, initialCheckout = null as any, recurringSubscription = null as any } = {}) {
@@ -12,6 +12,7 @@ function setup({ existingEvent = null as any, initialCheckout = null as any, rec
   (prisma.billingEvent.findUnique as jest.Mock).mockResolvedValue(existingEvent);
   (prisma.billingCheckout.findUnique as jest.Mock).mockResolvedValue(initialCheckout);
   (prisma.subscription.findFirst as jest.Mock).mockResolvedValue(recurringSubscription);
+  (prisma.subscription.findUnique as jest.Mock).mockResolvedValue(initialCheckout?.subscription ?? recurringSubscription);
   (prisma.billingEvent.create as jest.Mock).mockImplementation(async () => {
     if (existingEvent) {
       const error: any = new Error("Unique constraint");
@@ -35,8 +36,8 @@ function setup({ existingEvent = null as any, initialCheckout = null as any, rec
 describe("persistent Paystack webhook correlation", () => {
   it("persists verified subscription.create identity without activating or invoicing", async () => {
     setup({ initialCheckout: checkout });
-    await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "subscription.create", providerEventId: "subscription.create:sub_code", providerReference: "sf_initial", providerSubscriptionId: "sub_code", providerCustomerId: "customer_code", providerPlanCode: "PLN_GROWTH" })).resolves.toMatchObject({ handled: true });
-    expect(prisma.subscription.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ providerSubscriptionId: "sub_code", providerCustomerId: "customer_code", providerPlanCode: "PLN_GROWTH" }) }));
+    await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "subscription.create", providerEventId: "subscription.create:sub_code", providerReference: "sf_initial", providerSubscriptionId: "sub_code", providerCustomerId: "customer_code", providerEmailToken: "server-only-token", providerPlanCode: "PLN_GROWTH" })).resolves.toMatchObject({ handled: true });
+    expect(prisma.subscription.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ providerSubscriptionId: "sub_code", providerCustomerId: "customer_code", providerEmailToken: "server-only-token", providerPlanCode: "PLN_GROWTH" }) }));
     expect((prisma.subscription.update as jest.Mock).mock.calls[0][0].data.status).toBeUndefined();
     expect(prisma.billingInvoice.upsert).not.toHaveBeenCalled();
     expect((prisma.subscription.update as jest.Mock).mock.calls[0][0].where).toEqual({ id: "sub_1" });
@@ -211,10 +212,28 @@ describe("persistent Paystack webhook correlation", () => {
     expect(prisma.billingInvoice.upsert).not.toHaveBeenCalled();
     expect(prisma.subscription.update).not.toHaveBeenCalled();
   });
+
+  it("reconciles not-renewing and disabled events only through the persisted provider subscription", async () => {
+    const paidSubscription = { ...subscription, status: "ACTIVE", providerSubscriptionId: "sub_code", providerEmailToken: "token_1" };
+    setup({ recurringSubscription: paidSubscription });
+    await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "subscription.not_renew", providerEventId: "subscription.not_renew:sub_code", providerSubscriptionId: "sub_code", providerEmailToken: "token_2", currentPeriodEndsAt: new Date("2026-11-01") })).resolves.toMatchObject({ handled: true });
+    expect(prisma.subscription.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ cancelAtPeriodEnd: true, providerEmailToken: "token_2" }) }));
+    setup({ recurringSubscription: paidSubscription });
+    await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "subscription.disable", providerEventId: "subscription.disable:sub_code", providerSubscriptionId: "sub_code" })).resolves.toMatchObject({ handled: true });
+    expect(prisma.subscription.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "CANCELLED", cancelAtPeriodEnd: true }) }));
+  });
+
+  it("rejects cancellation events for an unknown provider subscription without cross-tenant fallback", async () => {
+    setup();
+    await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "subscription.disable", providerEventId: "subscription.disable:unknown", providerSubscriptionId: "unknown" })).resolves.toMatchObject({ reason: "correlation" });
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+  });
 });
 
 describe("plan-based checkout safety", () => {
-  beforeEach(() => jest.clearAllMocks());
+  const previousCallback = process.env.PAYSTACK_CALLBACK_URL;
+  beforeEach(() => { jest.clearAllMocks(); process.env.PAYSTACK_CALLBACK_URL = "https://app.salonflow.test/settings/billing"; });
+  afterAll(() => { if (previousCallback === undefined) delete process.env.PAYSTACK_CALLBACK_URL; else process.env.PAYSTACK_CALLBACK_URL = previousCallback; });
 
   it("refuses a replacement checkout while a provider subscription remains authoritative", async () => {
     (prisma.business.findUnique as jest.Mock).mockResolvedValue({
@@ -232,7 +251,7 @@ describe("plan-based checkout safety", () => {
   it("still initializes a legitimate first checkout when no provider subscription exists", async () => {
     (prisma.business.findUnique as jest.Mock).mockResolvedValue({
       id: "biz_1",
-      subscription: { id: "sub_1", providerSubscriptionId: null },
+      subscription: { id: "sub_1", status: "TRIALING", planCode: "GROWTH", providerSubscriptionId: null },
       users: [{ email: "owner@example.test" }],
     });
     (prisma.billingCheckout.create as jest.Mock).mockResolvedValue({ id: "checkout_1", reference: "sf_reference" });
@@ -242,6 +261,12 @@ describe("plan-based checkout safety", () => {
     await expect(initializeBusinessCheckout({ businessId: "biz_1", actorUserId: "owner_1", planCode: "GROWTH", provider })).resolves.toEqual({ authorizationUrl: "https://checkout.test", accessCode: "access", reference: "sf_reference" });
     expect(prisma.billingCheckout.create).toHaveBeenCalledTimes(1);
     expect(provider.initializeCheckout).toHaveBeenCalledTimes(1);
-    expect(provider.initializeCheckout).toHaveBeenCalledWith(expect.objectContaining({ planCode: "GROWTH", amount: 1_500_000 }));
+    expect(provider.initializeCheckout).toHaveBeenCalledWith(expect.objectContaining({ planCode: "GROWTH", amount: 1_500_000, callbackUrl: "https://app.salonflow.test/settings/billing" }));
+  });
+
+  it("keeps recovery on the current server-side plan", async () => {
+    (prisma.business.findUnique as jest.Mock).mockResolvedValue({ id: "biz_1", subscription: { id: "sub_1", status: "SUSPENDED", planCode: "STARTER", providerSubscriptionId: null }, users: [{ email: "owner@example.test" }] });
+    await expect(initializeBusinessCheckout({ businessId: "biz_1", actorUserId: "owner_1", planCode: "GROWTH", provider: {} as any })).rejects.toThrow(/current subscription plan/i);
+    expect(prisma.billingCheckout.create).not.toHaveBeenCalled();
   });
 });

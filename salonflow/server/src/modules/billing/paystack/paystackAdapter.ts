@@ -5,8 +5,12 @@ import {
   InitializeCheckoutInput,
   InitializeCheckoutResult,
   NormalizedBillingEvent,
+  InitialPaymentEvidence,
+  VerifiedInitialPayment,
 } from "../billingProvider";
 import { PaystackConfig } from "./paystackConfig";
+import { paystackResourceId } from "./paystackIdentity";
+import { PaystackRead, verifyInitialPaystackPayment, discoverPaystackSubscriptions } from "./paystackDiscovery";
 
 interface PaystackHttpResponse {
   status: boolean;
@@ -24,7 +28,17 @@ export interface PaystackHttpClient {
     body: Record<string, string>,
     options: { authorization: string; timeoutMs: number },
   ): Promise<PaystackHttpResponse>;
-  get?(path: string, options: { authorization: string; timeoutMs: number }): Promise<{ status: boolean; data?: Record<string, unknown> }>;
+  get?: (path: string, options: { authorization: string; timeoutMs: number }) => ReturnType<PaystackRead>;
+}
+
+function extractPaystackEmailToken(data: Record<string, unknown>): string | undefined {
+  const direct = data.email_token;
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+  const subscription = typeof data.subscription === "object" && data.subscription !== null
+    ? data.subscription as Record<string, unknown>
+    : undefined;
+  const nested = subscription?.email_token;
+  return typeof nested === "string" && nested.trim() ? nested.trim() : undefined;
 }
 
 /**
@@ -59,24 +73,63 @@ export class PaystackAdapter implements BillingProviderAdapter {
     return this.config.planCodes[planCode];
   }
 
+  private discoveryRead: PaystackRead = async (path) => {
+    try {
+      if (!this.http.get) throw new Error();
+      return await this.http.get(path, { authorization: `Bearer ${this.config.secretKey}`, timeoutMs: this.config.timeoutMs });
+    } catch (error) {
+      // Never propagate provider message text, bodies, tokens, or arbitrary errors.
+      if (error instanceof Error && error.name === "AbortError") throw new BillingProviderError("TIMEOUT", "Provider discovery timed out");
+      throw new BillingProviderError("UNAVAILABLE", "Provider discovery is unavailable");
+    }
+  };
+
+  verifyInitialPayment(input: InitialPaymentEvidence) {
+    return verifyInitialPaystackPayment(this.discoveryRead, this.config, input);
+  }
+
+  discoverSubscriptions(payment: VerifiedInitialPayment) {
+    return discoverPaystackSubscriptions(this.discoveryRead, payment);
+  }
+
   async getSubscriptionState(providerSubscriptionId: string) {
     if (!this.http.get) throw new BillingProviderError("UNAVAILABLE", "Paystack subscription lookup is unavailable");
     try {
       const response = await this.http.get(`/subscription/${encodeURIComponent(providerSubscriptionId)}`, { authorization: `Bearer ${this.config.secretKey}`, timeoutMs: this.config.timeoutMs });
-      const data = response.data;
-      if (!response.status || !data || typeof data.subscription_code !== "string" || data.subscription_code !== providerSubscriptionId) throw new BillingProviderError("MALFORMED_RESPONSE", "Paystack returned an invalid subscription response");
+      const data = response.data as Record<string, unknown> | undefined;
+      if (response.status !== true || !data || typeof data.subscription_code !== "string" || data.subscription_code !== providerSubscriptionId) throw new BillingProviderError("MALFORMED_RESPONSE", "Paystack returned an invalid subscription response");
       const next = typeof data.next_payment_date === "string" ? new Date(data.next_payment_date) : undefined;
       return {
         providerSubscriptionId: data.subscription_code,
         providerCustomerId: extractPaystackCustomerIdentity(data),
+        providerEmailToken: extractPaystackEmailToken(data),
         providerPlanCode: typeof data.plan === "object" && data.plan !== null && typeof (data.plan as Record<string, unknown>).plan_code === "string" ? (data.plan as Record<string, string>).plan_code : undefined,
-        status: data.status === "active" ? "ACTIVE" as const : data.status === "cancelled" ? "CANCELLED" as const : data.status === "past_due" ? "PAST_DUE" as const : undefined,
+        status: data.status === "active" ? "ACTIVE" as const : data.status === "non-renewing" ? "NON_RENEWING" as const : data.status === "cancelled" ? "CANCELLED" as const : data.status === "past_due" ? "PAST_DUE" as const : undefined,
         currentPeriodEndsAt: next && !Number.isNaN(next.getTime()) ? next : undefined,
       };
     } catch (error) {
       if (error instanceof BillingProviderError) throw error;
       if (error instanceof Error && error.name === "AbortError") throw new BillingProviderError("TIMEOUT", "Paystack subscription lookup timed out");
       throw new BillingProviderError("UNAVAILABLE", "Paystack subscription lookup is unavailable");
+    }
+  }
+
+  async disableSubscription(input: { providerSubscriptionId: string; providerEmailToken: string }) {
+    return this.changeSubscriptionRenewal("/subscription/disable", input, "disable");
+  }
+
+  async enableSubscription(input: { providerSubscriptionId: string; providerEmailToken: string }) {
+    return this.changeSubscriptionRenewal("/subscription/enable", input, "enable");
+  }
+
+  private async changeSubscriptionRenewal(path: string, input: { providerSubscriptionId: string; providerEmailToken: string }, action: "disable" | "enable") {
+    try {
+      const response = await this.http.post(path, { code: input.providerSubscriptionId, token: input.providerEmailToken }, { authorization: `Bearer ${this.config.secretKey}`, timeoutMs: this.config.timeoutMs });
+      if (response?.status !== true) throw new BillingProviderError("MALFORMED_RESPONSE", `Paystack returned an invalid subscription ${action} response`);
+    } catch (error) {
+      if (error instanceof BillingProviderError) throw error;
+      if (error instanceof Error && error.name === "AbortError") throw new BillingProviderError("TIMEOUT", `Paystack subscription ${action} timed out`);
+      throw new BillingProviderError("UNAVAILABLE", `Paystack subscription ${action} is unavailable`);
     }
   }
 
@@ -128,11 +181,13 @@ export class PaystackAdapter implements BillingProviderAdapter {
   normalizeWebhookEvent(payload: unknown): NormalizedBillingEvent | null {
     if (!payload || typeof payload !== "object") return null;
     const event = payload as { event?: unknown; data?: Record<string, unknown> };
-    if (event.event !== "charge.success" && event.event !== "invoice.payment_failed" && event.event !== "subscription.create") return null;
+    if (!["charge.success", "invoice.payment_failed", "subscription.create", "subscription.not_renew", "subscription.disable"].includes(String(event.event))) return null;
     // Both supported Paystack event types must contain their own stable object
     // identity. Do not fall back to arbitrary payload fields.
-    const rawId = event.event === "subscription.create" ? event.data?.subscription_code : event.data?.id;
-    const providerObjectId = typeof rawId === "string" || typeof rawId === "number" ? String(rawId) : null;
+    const rawId = ["subscription.create", "subscription.not_renew", "subscription.disable"].includes(String(event.event)) ? event.data?.subscription_code : event.data?.id;
+    const providerObjectId = String(event.event).startsWith("subscription.")
+      ? (typeof rawId === "string" && rawId.trim() ? rawId : undefined)
+      : paystackResourceId(rawId);
     const providerEventId = providerObjectId ? `${event.event}:${providerObjectId}` : null;
     if (!providerEventId) return null;
 
@@ -143,12 +198,15 @@ export class PaystackAdapter implements BillingProviderAdapter {
     return {
       provider: "PAYSTACK",
       providerEventId,
-      eventType: event.event,
-      providerReference: typeof event.data?.reference === "string" ? event.data.reference : typeof event.data?.metadata === "object" && event.data.metadata !== null && typeof (event.data.metadata as Record<string, unknown>).checkoutReference === "string" ? (event.data.metadata as Record<string, string>).checkoutReference : undefined,
+      eventType: String(event.event),
+      providerReference: typeof event.data?.reference === "string" ? event.data.reference
+        : typeof event.data?.transaction === "object" && event.data.transaction !== null && typeof (event.data.transaction as Record<string, unknown>).reference === "string" ? (event.data.transaction as Record<string, string>).reference
+          : typeof event.data?.metadata === "object" && event.data.metadata !== null && typeof (event.data.metadata as Record<string, unknown>).checkoutReference === "string" ? (event.data.metadata as Record<string, string>).checkoutReference : undefined,
       occurredAt: paidAt && !Number.isNaN(paidAt.getTime()) ? paidAt : undefined,
       amount,
       currency,
       providerCustomerId: extractPaystackCustomerIdentity(event.data ?? {}),
+      providerEmailToken: extractPaystackEmailToken(event.data ?? {}),
       providerSubscriptionId: typeof event.data?.subscription_code === "string" ? event.data.subscription_code : typeof event.data?.subscription === "object" && event.data.subscription !== null && typeof (event.data.subscription as Record<string, unknown>).subscription_code === "string" ? (event.data.subscription as Record<string, string>).subscription_code : undefined,
       providerPlanCode: typeof event.data?.plan === "object" && event.data.plan !== null && typeof (event.data.plan as Record<string, unknown>).plan_code === "string" ? (event.data.plan as Record<string, string>).plan_code : undefined,
       currentPeriodEndsAt: periodEnd && !Number.isNaN(periodEnd.getTime()) ? periodEnd : undefined,

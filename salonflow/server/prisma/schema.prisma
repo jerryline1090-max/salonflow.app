@@ -356,6 +356,9 @@ model Subscription {
   provider            BillingProvider?
   providerCustomerId  String?
   providerSubscriptionId String?
+  // Server-only Paystack subscription credential required for disable/enable.
+  // It is never returned from the subscription API or exposed to the browser.
+  providerEmailToken  String?
   providerPlanCode    String?
   trialEndsAt         DateTime?
   graceEndsAt         DateTime?
@@ -372,6 +375,7 @@ model Subscription {
   @@index([status])
   @@index([provider, providerCustomerId])
   @@index([provider, providerSubscriptionId])
+  @@unique([provider, providerSubscriptionId])
   @@index([status, trialEndsAt])
   @@index([status, graceEndsAt])
   @@index([status, pastDueEndsAt])

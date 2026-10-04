@@ -2,16 +2,17 @@ jest.mock("../../modules/billing/billingService", () => {
   class BillingCorrelationError extends Error {}
   return { BillingCorrelationError, initializeBusinessCheckout: jest.fn(), getBillingHistory: jest.fn(), scheduleCancellation: jest.fn(), undoScheduledCancellation: jest.fn() };
 });
-jest.mock("../../modules/billing/paystack/paystackProviderFactory", () => ({ createPaystackProvider: jest.fn(() => ({ getPlanCode: jest.fn() })) }));
+jest.mock("../../modules/billing/paystack/paystackProviderFactory", () => ({ ...jest.requireActual("../../modules/billing/paystack/paystackProviderFactory"), createPaystackProvider: jest.fn(() => ({ getPlanCode: jest.fn() })) }));
 jest.mock("../../modules/subscriptions/subscriptionService", () => ({ getBusinessSubscription: jest.fn(), resolveBusinessAccess: jest.fn(), summarizeSubscription: jest.fn() }));
 
 import express from "express";
 import request from "supertest";
 import { signToken } from "../../core/auth";
 import { errorHandler } from "../../middleware/errorHandler";
-import { BillingCorrelationError, getBillingHistory, initializeBusinessCheckout } from "../../modules/billing/billingService";
+import { BillingCorrelationError, getBillingHistory, initializeBusinessCheckout, undoScheduledCancellation } from "../../modules/billing/billingService";
 import { BillingProviderError } from "../../modules/billing/billingProvider";
 import { subscriptionRouter } from "../subscription.routes";
+import { FetchPaystackHttpClient } from "../../modules/billing/paystack/paystackProviderFactory";
 
 function app() { const instance = express(); instance.use(express.json()); instance.use("/api/subscription", require("../../middleware/authenticate").authenticate, subscriptionRouter); instance.use(errorHandler); return instance; }
 
@@ -75,6 +76,60 @@ describe("POST /api/subscription/checkout", () => {
   it.each([manager, staff])("denies non-OWNER recovery checkout", async (token) => {
     const response = await request(app()).post("/api/subscription/checkout").set("Authorization", `Bearer ${token}`).send({ planCode: "STARTER" });
     expect(response.status).toBe(403);
+  });
+});
+
+describe("POST /api/subscription/cancel/undo safe failures", () => {
+  const owner = signToken({ sub: "owner_1", businessId: "business_1", role: "OWNER" });
+  let log: jest.SpyInstance;
+  beforeEach(() => { jest.clearAllMocks(); log = jest.spyOn(console, "error").mockImplementation(() => {}); });
+  afterEach(() => log.mockRestore());
+  it("maps the observed Paystack 400 body through the real HTTP boundary to sanitized 409", async () => {
+    const savedFetch = global.fetch;
+    const message = "Subscription has been cancelled, and cannot be reactivated";
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 400, json: jest.fn().mockResolvedValue({ status: false, message }) }) as any;
+    try {
+      const failure = await new FetchPaystackHttpClient().post("/subscription/enable", { code: "SUB_fixture", token: "fake-private-token" }, { authorization: "Bearer fake-private-key", timeoutMs: 1000 }).catch(error => error);
+      expect(failure).toMatchObject({ kind: "REJECTED", rejectionCategory: "STATE_CONFLICT", providerStatus: 400, providerResponseStatus: false });
+      (undoScheduledCancellation as jest.Mock).mockRejectedValueOnce(failure);
+      const r = await request(app()).post("/api/subscription/cancel/undo").set("Authorization", `Bearer ${owner}`);
+      expect(r.status).toBe(409);
+      expect(r.body.code).toBe("BILLING_PROVIDER_STATE_CONFLICT");
+      expect(JSON.stringify([r.body, log.mock.calls])).not.toContain(message);
+      expect(JSON.stringify([r.body, log.mock.calls])).not.toContain("fake-private");
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    } finally { global.fetch = savedFetch; }
+  });
+  it.each([
+    ["REJECTED", undefined, 502, "BILLING_PROVIDER_REJECTED"],
+    ["REJECTED", "STATE_CONFLICT", 409, "BILLING_PROVIDER_STATE_CONFLICT"],
+    ["REJECTED", "CREDENTIAL_INVALID", 502, "BILLING_RECONCILIATION_REQUIRED"],
+    ["TIMEOUT", undefined, 504, "BILLING_PROVIDER_TIMEOUT"],
+    ["UNAVAILABLE", undefined, 502, "BILLING_PROVIDER_UNAVAILABLE"],
+    ["MALFORMED_RESPONSE", undefined, 502, "BILLING_PROVIDER_MALFORMED_RESPONSE"],
+    ["CONFIGURATION", undefined, 503, "BILLING_PROVIDER_CONFIGURATION"],
+  ])("maps %s/%s to %s without exposing provider diagnostics", async (kind, category, status, code) => {
+    (undoScheduledCancellation as jest.Mock).mockRejectedValueOnce(new BillingProviderError(kind as any, "private-internal-error", 400, "private-provider-message", false, category as any));
+    const r = await request(app()).post("/api/subscription/cancel/undo").set("Authorization", `Bearer ${owner}`).send({ token: "browser-token", providerSubscriptionId: "other" });
+    expect(r.status).toBe(status);expect(r.body.code).toBe(code);
+    expect(undoScheduledCancellation).toHaveBeenCalledWith("business_1", "owner_1", expect.any(Object));
+    expect(JSON.stringify([r.body, log.mock.calls])).not.toMatch(/private-|browser-token/);
+    expect(r.body).not.toHaveProperty("providerMessage");expect(r.body).not.toHaveProperty("providerStatus");
+  });
+  it("preserves safe local-state conflict semantics", async () => {
+    (undoScheduledCancellation as jest.Mock).mockRejectedValueOnce(new BillingCorrelationError("private detail"));
+    const r = await request(app()).post("/api/subscription/cancel/undo").set("Authorization", `Bearer ${owner}`);
+    expect(r.status).toBe(409);expect(JSON.stringify(r.body)).not.toContain("private detail");
+  });
+  it("keeps actual unexpected application failures as sanitized 500", async () => {
+    (undoScheduledCancellation as jest.Mock).mockRejectedValueOnce(new Error("private failure"));
+    const r = await request(app()).post("/api/subscription/cancel/undo").set("Authorization", `Bearer ${owner}`);
+    expect(r.status).toBe(500);expect(r.body).toEqual({ error: "Internal server error" });
+  });
+  it.each(["MANAGER", "STAFF"] as const)("still forbids %s billing actions", async role => {
+    const token = signToken({ sub: "not-owner", businessId: "business_1", role });
+    const r = await request(app()).post("/api/subscription/cancel/undo").set("Authorization", `Bearer ${token}`);
+    expect(r.status).toBe(403);expect(undoScheduledCancellation).not.toHaveBeenCalled();
   });
 });
 
