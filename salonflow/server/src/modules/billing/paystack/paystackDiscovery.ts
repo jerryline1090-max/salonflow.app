@@ -1,6 +1,6 @@
 import { BillingProviderError, DiscoveredSubscription, InitialPaymentEvidence, SubscriptionDiscovery, VerifiedInitialPayment } from "../billingProvider";
 import { PaystackConfig } from "./paystackConfig";
-import { paystackResourceId } from "./paystackIdentity";
+import { paystackResourceId, paystackTransactionId } from "./paystackIdentity";
 
 export type PaystackRead = (path: string) => Promise<{ status: boolean; data?: unknown; meta?: unknown }>;
 type RecordValue = Record<string, unknown>;
@@ -35,7 +35,7 @@ async function fetchRecord(read: PaystackRead, path: string) {
 
 export async function verifyInitialPaystackPayment(read: PaystackRead, config: PaystackConfig, input: InitialPaymentEvidence): Promise<VerifiedInitialPayment> {
   const tx = await fetchRecord(read, `/transaction/verify/${encodeURIComponent(input.reference)}`);
-  const transactionId = paystackResourceId(tx.id);
+  const transactionId = paystackTransactionId(tx.id);
   const paidAt = date(tx.paid_at);
   const domain = environment(config);
   if (!transactionId || !paidAt || tx.status !== "success" || tx.reference !== input.reference

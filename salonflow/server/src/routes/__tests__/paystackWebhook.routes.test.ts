@@ -7,7 +7,7 @@ import { createPaystackProvider } from "../../modules/billing/paystack/paystackP
 import { processVerifiedPaystackEvent } from "../../modules/billing/billingService";
 import { webhooksRouter } from "../webhooks.routes";
 
-function app() { const instance = express(); instance.use("/api/webhooks", express.json({ verify: (req: any, _res, body: Buffer) => { req.rawBody = body; } }), webhooksRouter); return instance; }
+function app() { const instance = express(); instance.use("/api/webhooks", webhooksRouter); return instance; }
 
 describe("POST /api/webhooks/paystack", () => {
   beforeEach(() => jest.clearAllMocks());

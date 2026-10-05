@@ -1,23 +1,34 @@
-import { Router } from "express";
+import express, { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { verifyMetaSignature } from "../middleware/verifyMetaSignature";
 import { buildWhatsAppDeps, buildInstagramDeps } from "../modules/ai/orchestratorFactory";
 import { handleUnifiedMessage } from "../modules/ai/receptionistOrchestrator";
 import { createPaystackProvider } from "../modules/billing/paystack/paystackProviderFactory";
 import { processVerifiedPaystackEvent } from "../modules/billing/billingService";
+import { paystackWebhookBody } from "../middleware/paystackWebhookBody";
+import { parsePaystackJson, PaystackJsonError } from "../modules/billing/paystack/paystackJson";
+import { TextDecoder } from "util";
 
 export const webhooksRouter = Router();
 
 // Paystack is intentionally public: its HMAC over the exact raw request body
 // is the authentication boundary. This handler never logs bodies/signatures.
-webhooksRouter.post("/paystack", async (req, res) => {
+webhooksRouter.post("/paystack", paystackWebhookBody, async (req, res) => {
   try {
     const provider = createPaystackProvider();
     const signature = req.header("x-paystack-signature");
     if (!Buffer.isBuffer((req as any).rawBody) || !provider.verifyWebhookSignature((req as any).rawBody, signature)) {
       return res.status(401).json({ error: "Invalid webhook signature" });
     }
-    const event = provider.normalizeWebhookEvent(req.body);
+    let payload: Record<string, unknown>;
+    try {
+      // Decode only after authentication; invalid UTF-8 is not silently replaced.
+      payload = parsePaystackJson(new TextDecoder("utf-8", { fatal: true }).decode((req as any).rawBody), "webhook");
+    } catch (error) {
+      if (error instanceof PaystackJsonError || error instanceof TypeError) return res.sendStatus(200);
+      throw error;
+    }
+    const event = provider.normalizeWebhookEvent(payload);
     if (!event) return res.sendStatus(200); // unsupported/malformed events are safely acknowledged
     const result = await processVerifiedPaystackEvent(event);
     // A transient processing failure must be non-2xx so Paystack can retry.
@@ -29,6 +40,10 @@ webhooksRouter.post("/paystack", async (req, res) => {
     return res.status(500).json({ error: "Webhook processing failed" });
   }
 });
+
+// Paystack has already finished its raw-body route above. Meta keeps its
+// existing JSON + raw capture behavior; no reliance on body-parser skip flags.
+webhooksRouter.use(express.json({ verify: (req: any, _res, body: Buffer) => { req.rawBody = body; } }));
 
 /**
  * Section 21: WhatsApp/Instagram → Channel Adapter → Unified Conversation

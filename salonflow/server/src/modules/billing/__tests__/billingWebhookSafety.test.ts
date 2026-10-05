@@ -226,8 +226,8 @@ describe.each(["development", "production"])("sanitized webhook diagnostics in %
     mock(createPaystackProvider).mockReturnValue({ verifyWebhookSignature: () => true, normalizeWebhookEvent: () => incoming });
     mock(prisma.billingInvoice.upsert).mockRejectedValueOnce(new BillingProviderError("UNAVAILABLE", fakeToken, 502, fakeToken));
     const app = express();
-    app.use("/api/webhooks", express.json({ verify: (req: any, _res, body) => { req.rawBody = body; } }), webhooksRouter);
-    const response = await request(app).post("/api/webhooks/paystack").set("x-paystack-signature", "mock-only").send({ event: "charge.success" });
+    app.use("/api/webhooks", webhooksRouter);
+    const response = await request(app).post("/api/webhooks/paystack").set("x-paystack-signature", "mock-only").send({ event: "charge.success", data: { id: 42 } });
     expect(response.status).toBe(503);
     expect(response.body).toEqual({ error: "Webhook processing is temporarily unavailable" });
     expectSecretFree(response.body);

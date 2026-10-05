@@ -1,8 +1,30 @@
 import { BillingProviderError } from "../billingProvider";
 import { PaystackAdapter, PaystackHttpClient } from "./paystackAdapter";
 import { getPaystackConfig } from "./paystackConfig";
+import { parsePaystackJson, PAYSTACK_JSON_LIMIT_BYTES } from "./paystackJson";
+import { TextDecoder } from "util";
 
 const MAX_PROVIDER_MESSAGE_LENGTH = 240;
+
+async function readTransactionText(response: Response): Promise<string> {
+  if (!response.body) throw new Error();
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > PAYSTACK_JSON_LIMIT_BYTES) {
+        await reader.cancel();
+        throw new Error();
+      }
+      chunks.push(value);
+    }
+    return new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks, size));
+  } finally { reader.releaseLock(); }
+}
 
 async function readSafeProviderError(response: { json(): Promise<unknown> }, protectedValues: string[]) {
   try {
@@ -35,7 +57,21 @@ function rejectionCategory(message?: string): "STATE_CONFLICT" | "CREDENTIAL_INV
 export class FetchPaystackHttpClient implements PaystackHttpClient {
   async get(path: string, options: { authorization: string; timeoutMs: number }) {
     const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
-    try { const response = await fetch(`https://api.paystack.co${path}`, { headers: { Authorization: options.authorization }, signal: controller.signal }); if (!response.ok) throw new BillingProviderError("REJECTED", "Paystack rejected the subscription lookup", response.status); return await response.json() as { status: boolean; data?: unknown; meta?: unknown }; } finally { clearTimeout(timeout); }
+    try {
+      const response = await fetch(`https://api.paystack.co${path}`, { headers: { Authorization: options.authorization }, signal: controller.signal });
+      if (!response.ok) throw new BillingProviderError("REJECTED", "Paystack rejected the subscription lookup", response.status);
+      if (path.startsWith("/transaction/verify/")) {
+        try {
+          const payload = parsePaystackJson(await readTransactionText(response), "verification");
+          if (typeof payload.status !== "boolean") throw new Error();
+          return { status: payload.status, data: payload.data };
+        } catch (error) {
+          if (error instanceof Error && error.name === "AbortError") throw error;
+          throw new BillingProviderError("MALFORMED_RESPONSE", "Paystack returned invalid transaction evidence", response.status);
+        }
+      }
+      return await response.json() as { status: boolean; data?: unknown; meta?: unknown };
+    } finally { clearTimeout(timeout); }
   }
   async post(path: string, body: Record<string, string>, options: { authorization: string; timeoutMs: number }) {
     const controller = new AbortController();

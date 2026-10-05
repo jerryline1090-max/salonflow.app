@@ -2,6 +2,8 @@ jest.mock("../../../lib/prisma");
 
 import { prisma } from "../../../lib/prisma";
 import { initializeBusinessCheckout, processVerifiedPaystackEvent } from "../billingService";
+import { PaystackAdapter } from "../paystack/paystackAdapter";
+import { parsePaystackJson } from "../paystack/paystackJson";
 
 const subscription = { id: "sub_1", businessId: "biz_1", planCode: "GROWTH", status: "TRIALING", provider: "PAYSTACK", providerCustomerId: null, providerSubscriptionId: null, providerEmailToken: null, providerPlanCode: "PLN_GROWTH", trialEndsAt: null, graceEndsAt: null, currentPeriodEndsAt: null, cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date() };
 const checkout = { id: "checkout_1", businessId: "biz_1", subscriptionId: "sub_1", provider: "PAYSTACK", reference: "sf_initial", planCode: "GROWTH", providerPlanCode: "PLN_GROWTH", amount: 1_500_000, currency: "NGN", status: "INITIALIZED", subscription };
@@ -34,6 +36,63 @@ function setup({ existingEvent = null as any, initialCheckout = null as any, rec
 }
 
 describe("persistent Paystack webhook correlation", () => {
+  it("keeps raw uint64 identities separate while identical duplicate keys replay without side effects", async () => {
+    setup({ initialCheckout: checkout });
+    const state = { ...subscription };
+    const events = new Map<string, any>();
+    const invoices = new Map<string, any>();
+    const completed = new Set<string>();
+    let rewarded = false;
+    (prisma.billingEvent.create as jest.Mock).mockImplementation(async ({ data }) => {
+      if (events.has(data.providerEventId)) throw Object.assign(new Error("Unique constraint"), { code: "P2002" });
+      const row = { ...data, id: `event_${events.size}` };
+      events.set(row.providerEventId, row);
+      return row;
+    });
+    (prisma.billingEvent.findUnique as jest.Mock).mockImplementation(async ({ where }) => events.get(where.provider_providerEventId.providerEventId));
+    (prisma.billingEvent.updateMany as jest.Mock).mockImplementation(async ({ where, data }) => {
+      const row = [...events.values()].find(e => e.id === where.id && e.status === where.status && e.processingToken === where.processingToken);
+      if (!row) return { count: 0 };
+      Object.assign(row, data);
+      return { count: 1 };
+    });
+    (prisma.billingCheckout.findUnique as jest.Mock).mockImplementation(async ({ where }) => ({ ...checkout, reference: where.reference, id: where.reference, subscription: state }));
+    (prisma.subscription.findUnique as jest.Mock).mockImplementation(async () => state);
+    (prisma.subscription.update as jest.Mock).mockImplementation(async ({ where, data }) => { expect(where).toEqual({ id: "sub_1" }); Object.assign(state, data); return state; });
+    (prisma.billingInvoice.upsert as jest.Mock).mockImplementation(async ({ where, create, update }) => {
+      const key = where.provider_providerReference.providerReference;
+      invoices.set(key, invoices.has(key) ? { ...invoices.get(key), ...update } : create);
+      return invoices.get(key);
+    });
+    (prisma.billingCheckout.update as jest.Mock).mockImplementation(async ({ where }) => { completed.add(where.id); return {}; });
+    (prisma.referral.findUnique as jest.Mock).mockImplementation(async () => ({ id: "referral_1", referrerBusinessId: "biz_referrer", status: rewarded ? "REWARDED" : "ATTRIBUTED", referrerBusiness: { subscription: { planCode: "STARTER" } } }));
+    (prisma.referral.updateMany as jest.Mock).mockImplementation(async () => { if (rewarded) return { count: 0 }; rewarded = true; return { count: 1 }; });
+    const adapter = new PaystackAdapter({ secretKey: "fake-only", timeoutMs: 100, planCodes: { STARTER: "PLN_fake", GROWTH: "PLN_GROWTH", PRO: "PLN_fake" } }, { post: jest.fn() });
+    const ids = ["1", "9007199254740992", "9007199254740993"];
+    for (const id of ids) {
+      const event = adapter.normalizeWebhookEvent(parsePaystackJson(`{"event":"charge.success","data":{"id":${id},"reference":"sf_${id}","amount":1500000,"currency":"NGN"}}`, "webhook"))!;
+      await expect(processVerifiedPaystackEvent(event)).resolves.toMatchObject({ handled: true, duplicate: false });
+      await expect(processVerifiedPaystackEvent(event)).resolves.toMatchObject({ handled: true, duplicate: true });
+      const duplicateKeys = adapter.normalizeWebhookEvent(parsePaystackJson(`{"event":"charge.success","data":{"id":${id},"id":${id},"reference":"sf_${id}","amount":1500000,"currency":"NGN"}}`, "webhook"))!;
+      expect(duplicateKeys).toEqual(event);
+      await expect(processVerifiedPaystackEvent(duplicateKeys)).resolves.toMatchObject({ handled: true, duplicate: true });
+    }
+    expect([...events.keys()]).toEqual(ids.map(id => `charge.success:${id}`));
+    expect([...events.values()].map(e => e.status)).toEqual(ids.map(() => "PROCESSED"));
+    expect(invoices.size).toBe(ids.length);
+    expect([...invoices.values()].every(i => i.businessId === "biz_1")).toBe(true);
+    expect(state.businessId).toBe("biz_1");
+    expect(state.providerSubscriptionId).toBeNull();
+    expect(completed.size).toBe(ids.length);
+    expect(prisma.billingInvoice.upsert).toHaveBeenCalledTimes(ids.length);
+    expect(prisma.subscription.update).toHaveBeenCalledTimes(ids.length);
+    expect(prisma.billingCheckout.update).toHaveBeenCalledTimes(ids.length);
+    expect(prisma.billingCreditEntry.create).toHaveBeenCalledTimes(1);
+    const audits = (prisma.auditLog.create as jest.Mock).mock.calls.map(([call]) => call.data.action);
+    expect(audits.filter(action => action === "subscription_activated")).toHaveLength(ids.length);
+    expect(audits.filter(action => action === "referral_credit_awarded")).toHaveLength(1);
+    expect(() => JSON.stringify([...events.values(), ...invoices.values(), state])).not.toThrow();
+  });
   it("persists verified subscription.create identity without activating or invoicing", async () => {
     setup({ initialCheckout: checkout });
     await expect(processVerifiedPaystackEvent({ provider: "PAYSTACK", eventType: "subscription.create", providerEventId: "subscription.create:sub_code", providerReference: "sf_initial", providerSubscriptionId: "sub_code", providerCustomerId: "customer_code", providerEmailToken: "server-only-token", providerPlanCode: "PLN_GROWTH" })).resolves.toMatchObject({ handled: true });

@@ -9,7 +9,7 @@ import {
   VerifiedInitialPayment,
 } from "../billingProvider";
 import { PaystackConfig } from "./paystackConfig";
-import { paystackResourceId } from "./paystackIdentity";
+import { paystackResourceId, paystackTransactionId } from "./paystackIdentity";
 import { PaystackRead, verifyInitialPaystackPayment, discoverPaystackSubscriptions } from "./paystackDiscovery";
 
 interface PaystackHttpResponse {
@@ -79,6 +79,9 @@ export class PaystackAdapter implements BillingProviderAdapter {
       return await this.http.get(path, { authorization: `Bearer ${this.config.secretKey}`, timeoutMs: this.config.timeoutMs });
     } catch (error) {
       // Never propagate provider message text, bodies, tokens, or arbitrary errors.
+      if (error instanceof BillingProviderError && error.kind === "MALFORMED_RESPONSE") {
+        throw new BillingProviderError("MALFORMED_RESPONSE", "Provider discovery evidence is malformed");
+      }
       if (error instanceof Error && error.name === "AbortError") throw new BillingProviderError("TIMEOUT", "Provider discovery timed out");
       throw new BillingProviderError("UNAVAILABLE", "Provider discovery is unavailable");
     }
@@ -187,7 +190,7 @@ export class PaystackAdapter implements BillingProviderAdapter {
     const rawId = ["subscription.create", "subscription.not_renew", "subscription.disable"].includes(String(event.event)) ? event.data?.subscription_code : event.data?.id;
     const providerObjectId = String(event.event).startsWith("subscription.")
       ? (typeof rawId === "string" && rawId.trim() ? rawId : undefined)
-      : paystackResourceId(rawId);
+      : event.event === "charge.success" ? paystackTransactionId(rawId) : paystackResourceId(rawId);
     const providerEventId = providerObjectId ? `${event.event}:${providerObjectId}` : null;
     if (!providerEventId) return null;
 

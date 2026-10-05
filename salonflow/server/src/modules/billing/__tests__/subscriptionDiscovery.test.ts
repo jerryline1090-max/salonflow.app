@@ -6,6 +6,8 @@ import { reconcileKnownSubscription } from "../billingService";
 import { BillingProviderAdapter, BillingProviderError } from "../billingProvider";
 import { checkProviderSubscriptionOwnership } from "../providerSubscriptionOwnership";
 import { resolveBusinessAccess, summarizeSubscription } from "../../subscriptions/subscriptionService";
+import { PaystackAdapter } from "../paystack/paystackAdapter";
+import { FetchPaystackHttpClient } from "../paystack/paystackProviderFactory";
 
 const mock = (fn: unknown) => fn as jest.Mock;
 const paidAt = new Date("2026-10-02T01:06:16Z");
@@ -55,6 +57,18 @@ function expectNoWrite() {
 }
 
 describe("verified initial subscription discovery", () => {
+  it.each(["9007199254740992", "9007199254740993", "18446744073709551615"])("finds exact processed evidence for raw verification ID %s", async id => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn().mockResolvedValue(new Response(`{"status":true,"data":{"id":${id},"status":"success","reference":"sf_test","amount":1000000,"currency":"NGN","domain":"test","paid_at":"2026-10-02T01:06:16Z","customer":{"customer_code":"CUS_test"},"plan":{"plan_code":"PLN_test"}}}`));
+    const adapter = new PaystackAdapter({ secretKey: "sk_test_fake_only", timeoutMs: 1000, planCodes: { STARTER: "PLN_test", GROWTH: "PLN_fake", PRO: "PLN_fake" } }, new FetchPaystackHttpClient());
+    provider.verifyInitialPayment = adapter.verifyInitialPayment.bind(adapter);
+    mock(prisma.billingEvent.findFirst).mockImplementation(async ({ where }) => where.providerEventId === `charge.success:${id}` && where.businessId === "biz" && where.status === "PROCESSED" ? { id: "event" } : null);
+    try {
+      await expect(run()).resolves.toMatchObject({ outcome: "reconciled" });
+      expect(provider.discoverSubscriptions).toHaveBeenCalledWith(expect.objectContaining({ transactionId: id }));
+      expect(prisma.billingEvent.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ providerEventId: `charge.success:${id}`, businessId: "biz", status: "PROCESSED" }) }));
+    } finally { global.fetch = originalFetch; }
+  });
   it("uses only the local 15-second Serializable budget and commits attachment with its audit", async () => {
     mock(prisma.auditLog.create).mockImplementationOnce(async ({ data }) => {
       expect(inTransaction).toBe(true);

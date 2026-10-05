@@ -85,19 +85,9 @@ app.use(
   })
 );
 
-// ── Channel webhooks (WhatsApp/Instagram) need the RAW request body to
-//    verify Meta's signature before anything trusts the payload — this
-//    dedicated JSON parser stashes the raw bytes. It's scoped to this path
-//    prefix only; every other route uses the plain parser below.
-app.use(
-  "/api/webhooks",
-  express.json({
-    verify: (req: any, _res, buf: Buffer) => {
-      req.rawBody = buf;
-    },
-  }),
-  webhooksRouter
-);
+// The webhook router handles Paystack raw bytes first, then Meta's existing
+// JSON/raw capture. Ordinary API JSON parsing remains after that router.
+app.use("/api/webhooks", webhooksRouter);
 
 app.use(express.json());
 
