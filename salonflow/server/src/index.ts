@@ -1,4 +1,5 @@
 import "dotenv/config";
+import "./core/validateStartupConfig";
 import express from "express";
 import cors from "cors";
 import { registerNotificationListeners } from "./modules/notifications/notificationListeners";

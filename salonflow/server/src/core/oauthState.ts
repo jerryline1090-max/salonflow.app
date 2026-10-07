@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
 import { IntegrationProvider } from "@prisma/client";
+import { resolveAuthSecrets } from "./authSecrets";
 
 /**
  * Meta's OAuth redirect back to our callback URL is an unauthenticated
@@ -12,7 +13,7 @@ import { IntegrationProvider } from "@prisma/client";
  * state token and a login session token should never be interchangeable,
  * even if someone found a way to feed one into the other's verifier.
  */
-const STATE_SECRET = process.env.OAUTH_STATE_SECRET ?? "dev-oauth-state-secret-change-me";
+const STATE_SECRET = resolveAuthSecrets().oauthStateSecret;
 const STATE_TTL = "10m"; // the whole connect flow (redirect to Meta, user approves, redirect back) should take well under this
 
 export interface OAuthStatePayload {

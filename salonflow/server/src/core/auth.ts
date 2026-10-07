@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { Role } from "@prisma/client";
+import { resolveAuthSecrets } from "./authSecrets";
 
 /**
  * Everything in this file is intentionally boring: standard bcrypt hashing,
@@ -9,7 +10,7 @@ import { Role } from "@prisma/client";
  * unchanged by this file) — not the crypto itself.
  */
 
-const JWT_SECRET = process.env.JWT_SECRET ?? "dev-secret-change-me";
+const JWT_SECRET = resolveAuthSecrets().jwtSecret;
 const TOKEN_TTL = process.env.JWT_TTL ?? "12h";
 
 export interface TokenPayload {
