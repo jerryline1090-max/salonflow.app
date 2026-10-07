@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma";
 import { writeAuditLog } from "../../core/auditLog";
+import { parseWrite, businessHoursWrite } from "../../core/writeBoundary";
 
 export interface BusinessHoursInput {
   dayOfWeek: number;
@@ -15,12 +16,13 @@ export async function saveBusinessHours(
   actorUserId: string,
   hours: BusinessHoursInput[],
 ) {
+  const rows = parseWrite(businessHoursWrite, hours);
   await prisma.$transaction(
-    hours.map((hour) =>
+    rows.map((hour) =>
       prisma.businessHours.upsert({
         where: { businessId_dayOfWeek: { businessId, dayOfWeek: hour.dayOfWeek } },
-        create: { businessId, ...hour },
-        update: hour,
+        create: { businessId, dayOfWeek: hour.dayOfWeek, openTime: hour.openTime, closeTime: hour.closeTime, isClosed: hour.isClosed },
+        update: { openTime: hour.openTime, closeTime: hour.closeTime, isClosed: hour.isClosed },
       }),
     ),
   );
@@ -31,6 +33,6 @@ export async function saveBusinessHours(
     resource: "settings",
     resourceId: businessId,
     action: "update_working_hours",
-    newValue: hours,
+    newValue: rows,
   });
 }

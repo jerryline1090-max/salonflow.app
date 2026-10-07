@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma";
 import { writeAuditLog } from "../../core/auditLog";
+import { parseWrite, serviceUpdate } from "../../core/writeBoundary";
 
 /**
  * Section 9 (master spec): services are centralized here — the booking
@@ -94,6 +95,7 @@ export interface UpdateServiceInput {
 }
 
 export async function updateService(input: UpdateServiceInput) {
+  const fields = parseWrite(serviceUpdate, input.updates);
   const existing = await prisma.service.findUniqueOrThrow({ where: { id: input.serviceId } });
   if (existing.businessId !== input.businessId) {
     throw new Error("Service not found for this business");
@@ -111,7 +113,15 @@ export async function updateService(input: UpdateServiceInput) {
     throw new Error("A service must be available at the salon, at home, or both");
   }
 
-  const updated = await prisma.service.update({ where: { id: input.serviceId }, data: input.updates });
+  const updated = await prisma.service.update({
+    where: { id: input.serviceId, businessId: input.businessId },
+    data: {
+      name: fields.name, description: fields.description, category: fields.category, imageUrl: fields.imageUrl,
+      price: fields.price, durationMinutes: fields.durationMinutes, bufferMinutes: fields.bufferMinutes,
+      availableAtSalon: fields.availableAtSalon, availableAtHome: fields.availableAtHome,
+      homeTravelBufferMins: fields.homeTravelBufferMins, requiredSkills: fields.requiredSkills, isActive: fields.isActive,
+    },
+  });
 
   await writeAuditLog({
     businessId: input.businessId,

@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma";
 import { writeAuditLog } from "../../core/auditLog";
+import { parseWrite, staffProfileUpdate, staffScheduleWrite } from "../../core/writeBoundary";
 
 /**
  * A `Staff` row (skills, schedule, home-service eligibility) is distinct
@@ -25,6 +26,7 @@ export interface CreateStaffInput {
 }
 
 export async function createStaffProfile(input: CreateStaffInput) {
+  const schedule = input.schedule === undefined ? undefined : parseWrite(staffScheduleWrite, input.schedule);
   if (input.userId) {
     const user = await prisma.user.findUnique({ where: { id: input.userId } });
     if (!user || user.businessId !== input.businessId) {
@@ -48,8 +50,8 @@ export async function createStaffProfile(input: CreateStaffInput) {
       homeServiceEligible: input.homeServiceEligible ?? false,
       commissionPercent: input.commissionPercent,
       userId: input.userId,
-      schedule: input.schedule
-        ? { create: input.schedule.map((s) => ({ ...s, isOff: s.isOff ?? false })) }
+      schedule: schedule
+        ? { create: schedule.map((s) => ({ dayOfWeek: s.dayOfWeek, startTime: s.startTime, endTime: s.endTime, isOff: s.isOff ?? false })) }
         : undefined,
       services: input.serviceIds ? { create: input.serviceIds.map((serviceId) => ({ serviceId })) } : undefined,
     },
@@ -83,12 +85,17 @@ export interface UpdateStaffProfileInput {
 }
 
 export async function updateStaffProfile(input: UpdateStaffProfileInput) {
+  const fields = parseWrite(staffProfileUpdate, input.updates);
   const existing = await prisma.staff.findUniqueOrThrow({ where: { id: input.staffId } });
   if (existing.businessId !== input.businessId) {
     throw new Error("Staff member not found for this business");
   }
 
-  const updated = await prisma.staff.update({ where: { id: input.staffId }, data: input.updates });
+  const updated = await prisma.staff.update({
+    where: { id: input.staffId, businessId: input.businessId },
+    data: { name: fields.name, phone: fields.phone, photoUrl: fields.photoUrl, skills: fields.skills,
+      homeServiceEligible: fields.homeServiceEligible, commissionPercent: fields.commissionPercent },
+  });
 
   await writeAuditLog({
     businessId: input.businessId,

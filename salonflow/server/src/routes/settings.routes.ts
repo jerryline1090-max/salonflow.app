@@ -6,6 +6,7 @@ import { assertValidTimezone } from "../core/timezone";
 import { saveBusinessHours } from "../modules/settings/businessHoursService";
 import { asyncHandler } from "../middleware/asyncHandler";
 import { rethrowIfDatabaseUnavailable } from "../middleware/errorHandler";
+import { parseWrite, businessSettingsUpdate } from "../core/writeBoundary";
 
 export const settingsRouter = Router();
 
@@ -45,9 +46,10 @@ settingsRouter.put("/", requirePermission("settings", "edit"), asyncHandler(asyn
   try {
     const before = await prisma.business.findUniqueOrThrow({ where: { id: req.actor!.businessId } });
 
+    const fields = parseWrite(businessSettingsUpdate, req.body);
     const data: Record<string, unknown> = {};
     for (const field of EDITABLE_FIELDS) {
-      if (field in req.body) data[field] = req.body[field];
+      if (Object.prototype.hasOwnProperty.call(fields, field)) data[field] = fields[field];
     }
     if ("timezone" in data) assertValidTimezone(data.timezone);
 

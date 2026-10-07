@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma";
 import { writeAuditLog } from "../../core/auditLog";
+import { parseWrite, clientUpdate } from "../../core/writeBoundary";
 
 /**
  * Client creation is simple enough to stay inline in clients.routes.ts's
@@ -16,12 +17,16 @@ export interface UpdateClientInput {
 }
 
 export async function updateClient(input: UpdateClientInput) {
+  const fields = parseWrite(clientUpdate, input.updates);
   const existing = await prisma.client.findUniqueOrThrow({ where: { id: input.clientId } });
   if (existing.businessId !== input.businessId) {
     throw new Error("Client not found for this business");
   }
 
-  const updated = await prisma.client.update({ where: { id: input.clientId }, data: input.updates });
+  const updated = await prisma.client.update({
+    where: { id: input.clientId, businessId: input.businessId },
+    data: { name: fields.name, phone: fields.phone, email: fields.email, address: fields.address, notes: fields.notes },
+  });
 
   await writeAuditLog({
     businessId: input.businessId,

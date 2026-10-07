@@ -12,7 +12,9 @@ const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Frid
 function defaultHours(existing?: BusinessHoursEntry[]): BusinessHoursEntry[] {
   return DAY_NAMES.map((_, dayOfWeek) => {
     const found = existing?.find((h) => h.dayOfWeek === dayOfWeek);
-    return found ?? { dayOfWeek, openTime: "09:00", closeTime: "18:00", isClosed: dayOfWeek === 0 };
+    return found
+      ? { dayOfWeek, openTime: found.openTime, closeTime: found.closeTime, isClosed: found.isClosed }
+      : { dayOfWeek, openTime: "09:00", closeTime: "18:00", isClosed: dayOfWeek === 0 };
   });
 }
 

@@ -105,7 +105,7 @@ describe("deactivateService", () => {
 
     await deactivateService("svc_1", "biz_1", "u1");
 
-    expect(prisma.service.update).toHaveBeenCalledWith({ where: { id: "svc_1" }, data: { isActive: false } });
+    expect(prisma.service.update).toHaveBeenCalledWith({ where: { id: "svc_1", businessId: "biz_1" }, data: { isActive: false } });
     expect(prisma.service.delete).not.toHaveBeenCalled();
   });
 });

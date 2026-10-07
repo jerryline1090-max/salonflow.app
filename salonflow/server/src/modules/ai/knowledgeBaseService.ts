@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma";
 import { writeAuditLog } from "../../core/auditLog";
+import { parseWrite, knowledgeUpdate } from "../../core/writeBoundary";
 
 /**
  * Section 25: salon-specific knowledge (products, policies, promotions,
@@ -42,12 +43,16 @@ export interface UpdateKnowledgeBaseEntryInput {
 }
 
 export async function updateKnowledgeBaseEntry(input: UpdateKnowledgeBaseEntryInput) {
+  const fields = parseWrite(knowledgeUpdate, input.updates);
   const existing = await prisma.knowledgeBaseEntry.findUniqueOrThrow({ where: { id: input.entryId } });
   if (existing.businessId !== input.businessId) {
     throw new Error("Knowledge base entry not found for this business");
   }
 
-  const updated = await prisma.knowledgeBaseEntry.update({ where: { id: input.entryId }, data: input.updates });
+  const updated = await prisma.knowledgeBaseEntry.update({
+    where: { id: input.entryId, businessId: input.businessId },
+    data: { topic: fields.topic, question: fields.question, answer: fields.answer },
+  });
 
   await writeAuditLog({
     businessId: input.businessId,
