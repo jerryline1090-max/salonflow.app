@@ -2,7 +2,7 @@ jest.mock("../../../lib/prisma");
 jest.mock("../../settings/businessHoursService", () => ({ saveBusinessHours: jest.fn() }));
 import { prisma } from "../../../lib/prisma";
 import { saveBusinessHours } from "../../settings/businessHoursService";
-import { advanceOnboarding, completeOnboarding, createOnboardingService, getOnboardingReview, saveOnboardingBusinessHours, skipOnboardingStep } from "../onboardingService";
+import { advanceOnboarding, completeOnboarding, createOnboardingService, getOnboardingState, getOnboardingReview, saveOnboardingBusinessHours, skipOnboardingStep } from "../onboardingService";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 
@@ -10,6 +10,26 @@ const business = { id: "biz_1", name: "Salon", timezone: "Africa/Lagos", onboard
 beforeEach(() => { (prisma.business.findUniqueOrThrow as jest.Mock).mockResolvedValue(business); (prisma.business.update as jest.Mock).mockResolvedValue({ onboardingStatus: "IN_PROGRESS", onboardingStep: "TEAM", onboardingCompletedAt: null }); });
 
 describe("onboarding workflow", () => {
+  it("restores the server-persisted step when onboarding is resumed", async () => {
+    const persisted = { onboardingStatus: "IN_PROGRESS", onboardingStep: "BUSINESS_HOURS", onboardingCompletedAt: null };
+    (prisma.business.findUniqueOrThrow as jest.Mock).mockResolvedValue(persisted);
+    await expect(getOnboardingState("biz_1", "OWNER")).resolves.toEqual(persisted);
+    expect(prisma.business.findUniqueOrThrow).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "biz_1" } }));
+  });
+  it("skips integrations and completes without a connected Meta account", async () => {
+    (prisma.business.findUniqueOrThrow as jest.Mock).mockResolvedValue({ ...business, onboardingStep: "INTEGRATIONS" });
+    await skipOnboardingStep("biz_1", "OWNER");
+    expect(prisma.business.update).toHaveBeenCalledWith(expect.objectContaining({ data: { onboardingStep: "REVIEW" } }));
+    (prisma.business.findUniqueOrThrow as jest.Mock).mockResolvedValue({ ...business, onboardingStep: "REVIEW" });
+    await completeOnboarding("biz_1", "OWNER");
+    expect(prisma.business.update).toHaveBeenLastCalledWith(expect.objectContaining({ data: expect.objectContaining({ onboardingStatus: "COMPLETED", onboardingStep: null }) }));
+    expect(prisma.integration.findMany).not.toHaveBeenCalled();
+  });
+  it("does not create or advance for invalid service price/duration", async () => {
+    await expect(createOnboardingService("biz_1", "OWNER", { name: "Cut", price: 1.5, durationMinutes: 30 })).rejects.toThrow(/whole numbers/i);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.business.update).not.toHaveBeenCalled();
+  });
   it("does not let non-owners manipulate owner onboarding", async () => {
     await expect(advanceOnboarding("biz_1", "STAFF")).rejects.toThrow(/owner/i);
   });
