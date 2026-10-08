@@ -18,7 +18,7 @@ authRouter.post("/register", asyncHandler(async (req, res) => {
       return res.status(400).json({ error: "businessName, ownerName, email, and password are required" });
     }
     const { business, user, token } = await registerBusiness({ businessName, ownerName, email, password, phone, referralCode });
-    res.status(201).json({ token, business, user: { id: user.id, name: user.name, email: user.email, role: user.role, businessId: business.id } });
+    res.status(201).json({ token, business: { id: business.id, name: business.name }, user: { id: user.id, name: user.name, email: user.email, role: user.role, businessId: business.id } });
   } catch (err: any) {
     rethrowIfDatabaseUnavailable(err);
     res.status(400).json({ error: err.message });

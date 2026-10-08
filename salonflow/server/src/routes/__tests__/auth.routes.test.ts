@@ -37,6 +37,24 @@ beforeEach(() => {
 });
 
 describe("POST /api/auth/register", () => {
+  it("never serializes nested users or credentials from a broad service result", async () => {
+    const owner = { id: "owner_1", name: "Ada", email: "ada@test.com", role: "OWNER", passwordHash: "fixture-hash-secret", resetToken: "fixture-reset-secret" };
+    (registerBusiness as jest.Mock).mockResolvedValue({
+      token: "fixture-jwt", user: owner,
+      business: { id: "biz_1", name: "Test Salon", users: [owner], createdAt: "unneeded", subscription: { providerEmailToken: "fixture-provider-secret" } },
+    });
+    const res = await request(buildApp()).post("/api/auth/register").send({
+      businessName: "Test Salon", ownerName: "Ada", email: "ada@test.com", password: "password1",
+    });
+    expect(res.status).toBe(201);
+    expect(res.body).toEqual({
+      token: "fixture-jwt", business: { id: "biz_1", name: "Test Salon" },
+      user: { id: "owner_1", name: "Ada", email: "ada@test.com", role: "OWNER", businessId: "biz_1" },
+    });
+    for (const forbidden of ["passwordHash", "fixture-hash-secret", "resetToken", "fixture-reset-secret", "users", "providerEmailToken", "createdAt"]) {
+      expect(res.text).not.toContain(forbidden);
+    }
+  });
   it("rejects a request missing required fields without touching the database", async () => {
     const res = await request(buildApp()).post("/api/auth/register").send({ email: "amaka@test.com" });
 
@@ -75,7 +93,7 @@ describe("POST /api/auth/login", () => {
 
   it("returns a token on success", async () => {
     (login as jest.Mock).mockResolvedValue({
-      user: { id: "user_1", name: "Amaka", email: "amaka@test.com", role: "OWNER", businessId: "biz_1" },
+      user: { id: "user_1", name: "Amaka", email: "amaka@test.com", role: "OWNER", businessId: "biz_1", passwordHash: "fixture-login-hash" },
       token: "signed.jwt.token",
     });
 
@@ -83,6 +101,8 @@ describe("POST /api/auth/login", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.token).toBe("signed.jwt.token");
+    expect(res.text).not.toContain("passwordHash");
+    expect(res.text).not.toContain("fixture-login-hash");
   });
 
   it("does not expose database or internal errors to the sign-in form", async () => {
@@ -120,6 +140,7 @@ describe("GET /api/auth/me", () => {
     const token = signToken({ sub: "owner_1", businessId: "biz_1", role: "OWNER" });
     (prisma.user.findUnique as jest.Mock).mockResolvedValue({
       id: "owner_1",
+      passwordHash: "fixture-me-hash",
       isActive: true,
       name: "Amaka",
       email: "amaka@test.com",
@@ -150,6 +171,8 @@ describe("GET /api/auth/me", () => {
       accessState: "FULL_ACCESS",
     }));
     expect(res.body.subscription.providerCustomerId).toBeUndefined();
+    expect(res.text).not.toContain("passwordHash");
+    expect(res.text).not.toContain("fixture-me-hash");
     expect(res.body.onboarding).toEqual({ onboardingStatus: "IN_PROGRESS", onboardingStep: "BUSINESS_DETAILS" });
   });
 

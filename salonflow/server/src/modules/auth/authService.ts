@@ -28,13 +28,19 @@ export interface RegisterBusinessInput {
   referralCode?: string;
 }
 
+export interface RegistrationResponse {
+  token: string;
+  business: { id: string; name: string };
+  user: { id: string; name: string; email: string; role: Role; businessId: string };
+}
+
 /**
  * The only way a Business comes into existence: alongside exactly one
  * OWNER user. There is no "sign up without a business" path, and no way to
  * self-assign MANAGER/STAFF at signup — those roles are only ever granted
  * later by an existing OWNER/MANAGER (section 28).
  */
-export async function registerBusiness(input: RegisterBusinessInput) {
+export async function registerBusiness(input: RegisterBusinessInput): Promise<RegistrationResponse> {
   const email = input.email.trim().toLowerCase();
   if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error("Enter a valid email address");
   if (input.password.length < 8) throw new Error("Password must be at least 8 characters");
@@ -65,7 +71,11 @@ export async function registerBusiness(input: RegisterBusinessInput) {
           },
         },
       },
-      include: { users: true },
+      select: {
+        id: true,
+        name: true,
+        users: { select: { id: true, name: true, email: true, role: true, businessId: true } },
+      },
     });
     await createReferralAttribution({ db: tx, referredBusinessId: created.id, referralCode: input.referralCode });
     // Every newly eligible business receives an opaque, stable code as part of
@@ -78,7 +88,11 @@ export async function registerBusiness(input: RegisterBusinessInput) {
   const owner = business.users[0];
   const token = signToken({ sub: owner.id, businessId: business.id, role: owner.role });
 
-  return { business, user: owner, token };
+  return {
+    token,
+    business: { id: business.id, name: business.name },
+    user: { id: owner.id, name: owner.name, email: owner.email, role: owner.role, businessId: business.id },
+  };
 }
 
 export interface LoginInput {

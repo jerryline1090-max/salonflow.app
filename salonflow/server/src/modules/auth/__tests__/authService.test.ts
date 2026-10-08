@@ -73,7 +73,40 @@ describe("registerBusiness", () => {
 
     expect(signToken).toHaveBeenCalledWith({ sub: "user_1", businessId: "biz_1", role: "OWNER" });
     expect(result.token).toBe("signed.jwt.token");
-    expect(result.user).toBe(owner);
+    expect(result.user).toEqual({ ...owner, businessId: "biz_1" });
+    expect(result.business).toEqual({ id: "biz_1", name: "Big Kitchen" });
+    expect(prisma.business.create).toHaveBeenCalledTimes(1);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(createArgs.select).toEqual({
+      id: true, name: true,
+      users: { select: { id: true, name: true, email: true, role: true, businessId: true } },
+    });
+    expect(createArgs.include).toBeUndefined();
+  });
+
+  it("projects only public fields even if Prisma returns unexpected sensitive properties", async () => {
+    (prisma.user.findUnique as jest.Mock).mockResolvedValue(null);
+    (hashPassword as jest.Mock).mockResolvedValue("fixture-password-hash");
+    (signToken as jest.Mock).mockReturnValue("fixture-jwt");
+    const owner = {
+      id: "owner_1", name: "Ada", email: "ada@test.com", role: "OWNER", businessId: "biz_1",
+      passwordHash: "fixture-password-hash", resetToken: "fixture-reset", permissions: [{ secret: true }],
+      createdAt: new Date(), updatedAt: new Date(),
+    };
+    (prisma.business.create as jest.Mock).mockResolvedValue({
+      id: "biz_1", name: "Test Salon", users: [owner],
+      subscription: { providerEmailToken: "fixture-provider-secret" },
+    });
+    const result = await registerBusiness({ businessName: "Test Salon", ownerName: "Ada", email: "ada@test.com", password: "password1" });
+    expect(result).toEqual({
+      token: "fixture-jwt", business: { id: "biz_1", name: "Test Salon" },
+      user: { id: "owner_1", name: "Ada", email: "ada@test.com", role: "OWNER", businessId: "biz_1" },
+    });
+    const json = JSON.stringify(result);
+    for (const forbidden of ["passwordHash", "fixture-password-hash", "resetToken", "permissions", "providerEmailToken", "users", "createdAt", "updatedAt"]) {
+      expect(json).not.toContain(forbidden);
+    }
+    expect(owner.passwordHash).toBe("fixture-password-hash");
   });
 
   it("attributes a registration only through a valid server-resolved referral code", async () => {

@@ -31,7 +31,7 @@ import type {
 export const authApi = {
   login: (email: string, password: string) => api.post<{ token: string; user: User }>("/auth/login", { email, password }),
   register: (input: { businessName: string; ownerName: string; email: string; password: string; phone: string; referralCode?: string }) =>
-    api.post<{ token: string; user: User; business: Business }>("/auth/register", input),
+    api.post<{ token: string; user: Pick<User, "id" | "name" | "email" | "role" | "businessId">; business: Pick<Business, "id" | "name"> }>("/auth/register", input),
   me: () => api.get<User>("/auth/me"),
 };
 
