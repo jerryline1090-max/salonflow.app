@@ -46,8 +46,10 @@ authRouter.post("/login", asyncHandler(async (req, res) => {
 // Everything below requires a valid token.
 authRouter.get("/me", authenticate, asyncHandler(async (req, res) => {
   const user = await prisma.user.findUnique({
-    where: { id: req.actor!.userId },
-    include: {
+    where: { id: req.actor!.userId, businessId: req.actor!.businessId },
+    select: {
+      name: true,
+      email: true,
       business: {
         select: {
           onboardingStatus: true,
@@ -57,14 +59,14 @@ authRouter.get("/me", authenticate, asyncHandler(async (req, res) => {
       },
     },
   });
-  if (!user) return res.status(404).json({ error: "User not found" });
+  if (!user) return res.status(401).json({ error: "Invalid or expired token" });
   res.json({
-    id: user.id,
+    id: req.actor!.userId,
     name: user.name,
     email: user.email,
-    role: user.role,
-    businessId: user.businessId,
-    onboarding: user.role === "OWNER"
+    role: req.actor!.role,
+    businessId: req.actor!.businessId,
+    onboarding: req.actor!.role === "OWNER"
       ? { onboardingStatus: user.business.onboardingStatus, onboardingStep: user.business.onboardingStep }
       : undefined,
     subscription: user.business.subscription ? summarizeSubscription(user.business.subscription) : undefined,
@@ -77,7 +79,7 @@ authRouter.use("/team", authenticate, requireBusinessAccess);
 
 // Section 28: viewing the team is a lighter bar than creating an account —
 // "staff:view" (which MANAGER has by default, unlike "staff:create").
-authRouter.get("/team", authenticate, requirePermission("staff", "view"), asyncHandler(async (req, res) => {
+authRouter.get("/team", requirePermission("staff", "view"), asyncHandler(async (req, res) => {
   const users = await prisma.user.findMany({
     where: { businessId: req.actor!.businessId },
     select: { id: true, name: true, email: true, role: true, isActive: true, createdAt: true },
@@ -89,7 +91,7 @@ authRouter.get("/team", authenticate, requirePermission("staff", "view"), asyncH
 // Section 28: only an OWNER may create team accounts and assign their role
 // (MANAGER default permissions don't include "staff:create" — see core/permissions.ts —
 // so this 403s for anyone but an OWNER unless the business explicitly overrides it).
-authRouter.post("/team", authenticate, requirePermission("staff", "create"), asyncHandler(async (req, res) => {
+authRouter.post("/team", requirePermission("staff", "create"), asyncHandler(async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
     if (role === "OWNER") {

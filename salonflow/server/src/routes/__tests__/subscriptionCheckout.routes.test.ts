@@ -7,7 +7,7 @@ jest.mock("../../modules/subscriptions/subscriptionService", () => ({ getBusines
 
 import express from "express";
 import request from "supertest";
-import { signToken } from "../../core/auth";
+import { signTokenForCurrentUser as signToken } from "../../test-utils/authenticatedUser";
 import { errorHandler } from "../../middleware/errorHandler";
 import { BillingCorrelationError, getBillingHistory, initializeBusinessCheckout, undoScheduledCancellation } from "../../modules/billing/billingService";
 import { BillingProviderError } from "../../modules/billing/billingProvider";
@@ -152,3 +152,4 @@ describe("GET /api/subscription/history", () => {
     expect(getBillingHistory).not.toHaveBeenCalled();
   });
 });
+jest.mock("../../lib/prisma");

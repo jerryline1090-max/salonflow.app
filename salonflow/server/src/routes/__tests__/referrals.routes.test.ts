@@ -2,7 +2,7 @@ jest.mock("../../modules/referrals/referralService", () => ({ getReferralSummary
 
 import express from "express";
 import request from "supertest";
-import { signToken } from "../../core/auth";
+import { signTokenForCurrentUser as signToken } from "../../test-utils/authenticatedUser";
 import { errorHandler } from "../../middleware/errorHandler";
 import { getReferralSummary } from "../../modules/referrals/referralService";
 import { referralsRouter } from "../referrals.routes";
@@ -35,3 +35,4 @@ describe("GET /api/referrals", () => {
     expect(getReferralSummary).not.toHaveBeenCalled();
   });
 });
+jest.mock("../../lib/prisma");

@@ -1,6 +1,9 @@
+jest.mock("../../lib/prisma");
+
 import { Request, Response } from "express";
 import { authenticate } from "../authenticate";
 import { signToken } from "../../core/auth";
+import { prisma } from "../../lib/prisma";
 
 function mockReqRes(headers: Record<string, string> = {}) {
   const req = { headers } as unknown as Request;
@@ -41,11 +44,12 @@ describe("authenticate middleware", () => {
     expect(req.actor).toBeUndefined();
   });
 
-  it("attaches an ActorContext to the request and calls next() for a valid token", () => {
+  it("attaches an ActorContext to the request and calls next() for a valid token", async () => {
+    (prisma.user.findUnique as jest.Mock).mockResolvedValue({ id: "user_1", businessId: "biz_1", role: "MANAGER", isActive: true });
     const token = signToken({ sub: "user_1", businessId: "biz_1", role: "MANAGER" });
     const { req, res, next } = mockReqRes({ authorization: `Bearer ${token}` });
 
-    authenticate(req, res, next);
+    await authenticate(req, res, next);
 
     expect(next).toHaveBeenCalled();
     expect(req.actor).toEqual({ userId: "user_1", businessId: "biz_1", role: "MANAGER" });

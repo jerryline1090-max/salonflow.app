@@ -6,7 +6,7 @@ import request from "supertest";
 import { prisma } from "../../lib/prisma";
 import { authenticate } from "../../middleware/authenticate";
 import { servicesRouter } from "../services.routes";
-import { signToken } from "../../core/auth";
+import { signTokenForCurrentUser as signToken } from "../../test-utils/authenticatedUser";
 import { createService, updateService } from "../../modules/services/serviceService";
 import { buildService } from "../../test-utils/factories";
 

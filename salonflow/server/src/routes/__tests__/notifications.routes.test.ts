@@ -5,7 +5,7 @@ import request from "supertest";
 import { prisma } from "../../lib/prisma";
 import { authenticate } from "../../middleware/authenticate";
 import { notificationsRouter } from "../notifications.routes";
-import { signToken } from "../../core/auth";
+import { signTokenForCurrentUser as signToken } from "../../test-utils/authenticatedUser";
 
 function buildApp() {
   const app = express();

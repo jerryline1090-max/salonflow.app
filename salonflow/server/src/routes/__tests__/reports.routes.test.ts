@@ -6,7 +6,7 @@ import request from "supertest";
 import { prisma } from "../../lib/prisma";
 import { authenticate } from "../../middleware/authenticate";
 import { reportsRouter } from "../reports.routes";
-import { signToken } from "../../core/auth";
+import { signTokenForCurrentUser as signToken } from "../../test-utils/authenticatedUser";
 import { getRevenueReport } from "../../modules/reports/reportService";
 
 function buildApp() {

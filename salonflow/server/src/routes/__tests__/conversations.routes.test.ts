@@ -7,7 +7,7 @@ import request from "supertest";
 import { prisma } from "../../lib/prisma";
 import { authenticate } from "../../middleware/authenticate";
 import { conversationsRouter } from "../conversations.routes";
-import { signToken } from "../../core/auth";
+import { signTokenForCurrentUser as signToken } from "../../test-utils/authenticatedUser";
 import { takeOverConversation } from "../../modules/conversations/conversationEngine";
 
 function buildApp() {

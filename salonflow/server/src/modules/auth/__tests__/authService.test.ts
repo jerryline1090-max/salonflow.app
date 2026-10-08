@@ -119,6 +119,8 @@ describe("login", () => {
     (verifyPassword as jest.Mock).mockResolvedValue(true);
 
     await expect(login({ email: "amaka@test.com", password: "correct" })).rejects.toThrow(AccountInactiveError);
+    await expect(login({ email: "amaka@test.com", password: "correct" })).rejects.toThrow("Invalid email or password");
+    expect(signToken).not.toHaveBeenCalled();
   });
 
   it("issues a token scoped to the user's business and role on success", async () => {

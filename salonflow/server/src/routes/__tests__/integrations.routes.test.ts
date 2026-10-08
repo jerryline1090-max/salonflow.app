@@ -6,7 +6,7 @@ import request from "supertest";
 import { prisma } from "../../lib/prisma";
 import { authenticate } from "../../middleware/authenticate";
 import { integrationsRouter } from "../integrations.routes";
-import { signToken } from "../../core/auth";
+import { signTokenForCurrentUser as signToken } from "../../test-utils/authenticatedUser";
 import { beginConnect, disconnectIntegration } from "../../modules/integrations/integrationService";
 
 function buildApp() {

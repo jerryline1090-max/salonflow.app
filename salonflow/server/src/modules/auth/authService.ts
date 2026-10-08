@@ -14,7 +14,7 @@ export class InvalidCredentialsError extends Error {
 
 export class AccountInactiveError extends Error {
   constructor() {
-    super("This account has been deactivated");
+    super("Invalid email or password");
     this.name = "AccountInactiveError";
   }
 }

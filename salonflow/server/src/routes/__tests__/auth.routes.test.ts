@@ -19,7 +19,7 @@ import express from "express";
 import request from "supertest";
 import { prisma } from "../../lib/prisma";
 import { authRouter } from "../auth.routes";
-import { signToken } from "../../core/auth";
+import { signTokenForCurrentUser as signToken } from "../../test-utils/authenticatedUser";
 import { registerBusiness, login, createTeamMember, InvalidCredentialsError } from "../../modules/auth/authService";
 import { errorHandler } from "../../middleware/errorHandler";
 import { Prisma } from "@prisma/client";
@@ -120,6 +120,7 @@ describe("GET /api/auth/me", () => {
     const token = signToken({ sub: "owner_1", businessId: "biz_1", role: "OWNER" });
     (prisma.user.findUnique as jest.Mock).mockResolvedValue({
       id: "owner_1",
+      isActive: true,
       name: "Amaka",
       email: "amaka@test.com",
       role: "OWNER",

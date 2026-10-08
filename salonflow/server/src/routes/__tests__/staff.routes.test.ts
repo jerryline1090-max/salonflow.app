@@ -6,7 +6,7 @@ import request from "supertest";
 import { prisma } from "../../lib/prisma";
 import { authenticate } from "../../middleware/authenticate";
 import { staffRouter } from "../staff.routes";
-import { signToken } from "../../core/auth";
+import { signTokenForCurrentUser as signToken } from "../../test-utils/authenticatedUser";
 import { createStaffProfile, setStaffSchedule } from "../../modules/staff/staffProfile";
 import { buildStaff } from "../../test-utils/factories";
 

@@ -33,7 +33,10 @@ export class InvalidTokenError extends Error {
 export function verifyToken(token: string): TokenPayload {
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    if (typeof decoded === "string" || !decoded.sub || !decoded.businessId || !decoded.role) {
+    if (typeof decoded === "string"
+      || typeof decoded.sub !== "string" || !decoded.sub.trim()
+      || typeof decoded.businessId !== "string" || !decoded.businessId.trim()
+      || (decoded.role !== "OWNER" && decoded.role !== "MANAGER" && decoded.role !== "STAFF")) {
       throw new InvalidTokenError();
     }
     return { sub: decoded.sub as string, businessId: decoded.businessId as string, role: decoded.role as Role };

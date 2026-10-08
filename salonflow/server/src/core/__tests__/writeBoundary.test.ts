@@ -5,7 +5,7 @@ import express from "express";
 import request from "supertest";
 import { prisma } from "../../lib/prisma";
 import { writeAuditLog } from "../auditLog";
-import { signToken } from "../auth";
+import { signTokenForCurrentUser as signToken } from "../../test-utils/authenticatedUser";
 import { authenticate } from "../../middleware/authenticate";
 import { staffRouter } from "../../routes/staff.routes";
 import { servicesRouter } from "../../routes/services.routes";

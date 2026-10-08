@@ -6,7 +6,7 @@ import request from "supertest";
 import { prisma } from "../../lib/prisma";
 import { authenticate } from "../../middleware/authenticate";
 import { appointmentsRouter } from "../appointments.routes";
-import { signToken } from "../../core/auth";
+import { signTokenForCurrentUser as signToken } from "../../test-utils/authenticatedUser";
 import { reassignAppointmentStaff, acknowledgeAttention, rescheduleAppointment } from "../../modules/appointments/appointmentService";
 import { buildAppointment } from "../../test-utils/factories";
 

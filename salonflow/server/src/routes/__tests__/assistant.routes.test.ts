@@ -5,7 +5,7 @@ import express from "express";
 import request from "supertest";
 import { authenticate } from "../../middleware/authenticate";
 import { assistantRouter } from "../assistant.routes";
-import { signToken } from "../../core/auth";
+import { signTokenForCurrentUser as signToken } from "../../test-utils/authenticatedUser";
 import { askAssistant } from "../../modules/ai/assistantOrchestrator";
 import { resolveAssistantModelClient } from "../../modules/ai/orchestratorFactory";
 
@@ -47,3 +47,4 @@ describe("POST /api/assistant/ask", () => {
     );
   });
 });
+jest.mock("../../lib/prisma");

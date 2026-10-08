@@ -7,7 +7,7 @@ import request from "supertest";
 import { prisma } from "../../lib/prisma";
 import { authenticate } from "../../middleware/authenticate";
 import { knowledgeBaseRouter } from "../knowledgeBase.routes";
-import { signToken } from "../../core/auth";
+import { signTokenForCurrentUser as signToken } from "../../test-utils/authenticatedUser";
 import { createKnowledgeBaseEntry } from "../../modules/ai/knowledgeBaseService";
 import { promoteEscalationToKnowledgeBase } from "../../modules/ai/aiKnowledge";
 
