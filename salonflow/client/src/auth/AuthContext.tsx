@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { authApi } from "@/api/resources";
 import { ApiError, getToken, setToken } from "@/api/client";
+import { getSessionSnapshot } from "./sessionCache";
 import type { User } from "@/types";
 
 interface AuthContextValue {
@@ -21,6 +22,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [bootstrapError, setBootstrapError] = useState(false);
 
   const bootstrap = useCallback(async () => {
+    const session = getSessionSnapshot();
     const token = getToken();
     if (!token) {
       setUser(null);
@@ -33,9 +35,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       setUser(await authApi.me());
     } catch (error) {
+      if (session !== getSessionSnapshot()) return;
       setUser(null);
       if (error instanceof ApiError && error.status === 401) {
-        setToken(null);
+        // apiRequest already retires the session/cache on a current 401.
+        if (getToken()) setToken(null);
       } else {
         // Keep a valid-looking stored session during a temporary outage. A
         // protected route remains blocked until /auth/me succeeds on retry.
@@ -53,13 +57,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function login(email: string, password: string) {
     const { token } = await authApi.login(email, password);
     setToken(token);
-    setUser(await authApi.me());
+    // The new session remounts AuthProvider and validates /auth/me behind the
+    // existing bootstrap gate before any authenticated queries can render.
   }
 
   async function register(input: { businessName: string; ownerName: string; email: string; password: string; phone: string }) {
     const { token } = await authApi.register(input);
     setToken(token);
-    setUser(await authApi.me());
   }
 
   function logout() {

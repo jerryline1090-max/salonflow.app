@@ -1,7 +1,8 @@
 import type { ApiErrorBody } from "@/types";
+import { getSessionSnapshot, getToken, setToken } from "@/auth/sessionCache";
+export { getToken, setToken } from "@/auth/sessionCache";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
-const TOKEN_STORAGE_KEY = "salonflow.token";
 const REQUEST_TIMEOUT_MS = 15_000;
 
 export class ApiError extends Error {
@@ -19,15 +20,6 @@ export class ApiUnavailableError extends ApiError {
     super("SalonFlow is temporarily unavailable. Please try again shortly.", 503);
     this.name = "ApiUnavailableError";
   }
-}
-
-export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_STORAGE_KEY);
-}
-
-export function setToken(token: string | null) {
-  if (token) localStorage.setItem(TOKEN_STORAGE_KEY, token);
-  else localStorage.removeItem(TOKEN_STORAGE_KEY);
 }
 
 interface RequestOptions {
@@ -55,46 +47,59 @@ function buildUrl(path: string, query?: RequestOptions["query"]): string {
  * reimplementing fetch + error handling slightly differently.
  */
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const session = getSessionSnapshot();
   const token = getToken();
   const controller = new AbortController();
+  const abort = () => controller.abort();
+  session.controller.signal.addEventListener("abort", abort, { once: true });
+  const assertCurrentSession = () => {
+    if (session !== getSessionSnapshot()) throw new ApiError("Session changed — request discarded", 409);
+  };
   const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  let res: Response;
   try {
-    res = await fetch(buildUrl(path, options.query), {
-      method: options.method ?? "GET",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
-      signal: controller.signal,
-    });
-  } catch (error) {
-    if (controller.signal.aborted) throw new ApiUnavailableError("timeout");
-    throw new ApiUnavailableError("network");
+    let res: Response;
+    try {
+      res = await fetch(buildUrl(path, options.query), {
+        method: options.method ?? "GET",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+        signal: controller.signal,
+      });
+    } catch (error) {
+      assertCurrentSession();
+      if (controller.signal.aborted) throw new ApiUnavailableError("timeout");
+      throw new ApiUnavailableError("network");
+    }
+    // In particular, an old A-session 401 must not log out the new B session.
+    assertCurrentSession();
+
+    if (res.status === 401) {
+      setToken(null);
+      if (!window.location.pathname.startsWith("/login")) {
+        window.location.href = "/login";
+      }
+      throw new ApiError("Session expired — please sign in again", 401);
+    }
+
+    if (res.status === 204) {
+      return undefined as T;
+    }
+
+    const data = await res.json().catch(() => ({}) as ApiErrorBody);
+    assertCurrentSession();
+
+    if (!res.ok) {
+      throw new ApiError((data as ApiErrorBody).error ?? "Something went wrong", res.status);
+    }
+
+    return data as T;
   } finally {
     window.clearTimeout(timeout);
+    session.controller.signal.removeEventListener("abort", abort);
   }
-
-  if (res.status === 401) {
-    setToken(null);
-    if (!window.location.pathname.startsWith("/login")) {
-      window.location.href = "/login";
-    }
-    throw new ApiError("Session expired — please sign in again", 401);
-  }
-
-  if (res.status === 204) {
-    return undefined as T;
-  }
-
-  const data = await res.json().catch(() => ({}) as ApiErrorBody);
-
-  if (!res.ok) {
-    throw new ApiError((data as ApiErrorBody).error ?? "Something went wrong", res.status);
-  }
-
-  return data as T;
 }
 
 export const api = {
