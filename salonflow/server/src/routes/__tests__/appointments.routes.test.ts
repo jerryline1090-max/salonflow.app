@@ -9,6 +9,7 @@ import { appointmentsRouter } from "../appointments.routes";
 import { signTokenForCurrentUser as signToken } from "../../test-utils/authenticatedUser";
 import { reassignAppointmentStaff, acknowledgeAttention, rescheduleAppointment } from "../../modules/appointments/appointmentService";
 import { buildAppointment } from "../../test-utils/factories";
+import { AppointmentConflictError } from "../../modules/appointments/appointmentTransaction";
 
 function buildApp() {
   const app = express();
@@ -25,6 +26,14 @@ const otherBusinessOwnerToken = signToken({ sub: "owner_2", businessId: "biz_2",
 beforeEach(() => {
   // No per-user permission overrides in these tests — role defaults apply.
   (prisma.permission.findUnique as jest.Mock).mockResolvedValue(null);
+});
+
+it("returns a safe 409 for a stale reschedule instead of database details", async () => {
+  (prisma.appointment.findUniqueOrThrow as jest.Mock).mockResolvedValue(buildAppointment());
+  (rescheduleAppointment as jest.Mock).mockRejectedValue(new AppointmentConflictError());
+  const res = await request(buildApp()).post("/api/appointments/appt_1/reschedule").set("Authorization", `Bearer ${ownerToken}`).send({ newStartsAt: "2026-08-26T10:00:00Z" });
+  expect(res.status).toBe(409);
+  expect(res.body).toEqual({ error: "This time is no longer available. Please refresh and try again." });
 });
 
 describe("GET /api/appointments", () => {

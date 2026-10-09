@@ -24,6 +24,11 @@ beforeEach(() => {
   (prisma.client.findUnique as jest.Mock).mockResolvedValue(buildClient());
   (prisma.staff.findUnique as jest.Mock).mockResolvedValue(buildStaff());
   (prisma.staffService.findUnique as jest.Mock).mockResolvedValue({ id: "staff_service_1" });
+  (prisma.appointment.updateMany as jest.Mock).mockImplementation(async ({ data }) => {
+    const previous = await prisma.appointment.findUniqueOrThrow({ where: { id: "appt_1" } });
+    (prisma.appointment.findUniqueOrThrow as jest.Mock).mockResolvedValue({ ...previous, ...data });
+    return { count: 1 };
+  });
   (prisma.$transaction as jest.Mock).mockImplementation(async (callback) => callback(prisma));
 });
 
@@ -115,7 +120,7 @@ describe("createAppointment", () => {
     expect(prisma.appointmentEvent.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ type: "CREATED" }) })
     );
-    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "create", resource: "appointment" }));
+    expect(prisma.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ action: "create", resource: "appointment" }) });
     expect(eventBus.emit).toHaveBeenCalledWith("appointment.created", "biz_1", expect.objectContaining({ appointment: created }));
     expect(result).toBe(created);
   });
@@ -157,7 +162,7 @@ describe("changeAppointmentStatus", () => {
 
     const result = await changeAppointmentStatus({ appointmentId: "appt_1", newStatus: "COMPLETED", actor });
 
-    expect(prisma.appointment.update).toHaveBeenCalledWith(
+    expect(prisma.appointment.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: "COMPLETED", needsAttention: false }) })
     );
     expect(prisma.appointmentEvent.create).toHaveBeenCalledWith(
@@ -209,10 +214,10 @@ describe("rescheduleAppointment", () => {
 
     await rescheduleAppointment({ appointmentId: "appt_1", newStartsAt: wednesdayAt(16), actor });
 
-    expect(checkStaffAvailability).toHaveBeenCalledWith(expect.objectContaining({ excludeAppointmentId: "appt_1" }));
-    expect(checkStaffAvailability).toHaveBeenCalledWith(expect.objectContaining({ travelBufferMins: 45 }));
-    const updateData = (prisma.appointment.update as jest.Mock).mock.calls[0][0].data;
-    expect(updateData.endsAt.getTime()).toBe(wednesdayAt(16).getTime() + 135 * 60_000);
+    expect(checkStaffAvailability).toHaveBeenCalledWith(expect.objectContaining({ excludeAppointmentId: "appt_1" }), prisma);
+    expect(checkStaffAvailability).toHaveBeenCalledWith(expect.objectContaining({ travelBufferMins: 45 }), prisma);
+    const updateData = (prisma.appointment.updateMany as jest.Mock).mock.calls[0][0].data;
+    expect(updateData.endsAt.getTime()).toBe(wednesdayAt(16).getTime() + 195 * 60_000);
     expect(prisma.appointmentEvent.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ type: "RESCHEDULED" }) })
     );

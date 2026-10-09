@@ -61,7 +61,7 @@ function timezoneOffsetAt(instant: Date, timezone: string) {
   return Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second) - instantAtSecond;
 }
 
-function zonedParts(instant: Date, timezone: string): ZonedDateParts {
+export function zonedParts(instant: Date, timezone: string): ZonedDateParts {
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
     year: "numeric",
@@ -78,7 +78,7 @@ function zonedParts(instant: Date, timezone: string): ZonedDateParts {
   return { year: values.year, month: values.month, day: values.day, hour: values.hour, minute: values.minute, second: values.second };
 }
 
-function shiftCalendarDay(parts: ZonedDateParts, days: number): ZonedDateParts {
+export function shiftCalendarDay(parts: ZonedDateParts, days: number): ZonedDateParts {
   const shifted = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + days));
   return { year: shifted.getUTCFullYear(), month: shifted.getUTCMonth() + 1, day: shifted.getUTCDate(), hour: 0, minute: 0, second: 0 };
 }

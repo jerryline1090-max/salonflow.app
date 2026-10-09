@@ -1,9 +1,30 @@
-import { AppointmentStatus, BookingChannel, LocationType } from "@prisma/client";
+import { AppointmentStatus, BookingChannel, LocationType, Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { eventBus } from "../../core/eventBus";
 import { writeAuditLog } from "../../core/auditLog";
 import { checkStaffAvailability } from "../staff/staffAvailability";
 import { isTransitionAllowed, InvalidStatusTransitionError } from "./appointmentStateMachine";
+import { appointmentTransaction, AppointmentConflictError } from "./appointmentTransaction";
+
+async function appointmentAudit(tx: Prisma.TransactionClient, input: Parameters<typeof writeAuditLog>[0]) {
+  await tx.auditLog.create({ data: {
+    ...input, actorType: input.actorType ?? "USER",
+    previousValue: input.previousValue === undefined ? null : JSON.stringify(input.previousValue),
+    newValue: input.newValue === undefined ? null : JSON.stringify(input.newValue),
+  } });
+}
+
+function assertMovable(status: AppointmentStatus) {
+  if (status !== "PENDING" && status !== "CONFIRMED") throw new AppointmentConflictError("A terminal appointment cannot be moved or reassigned.");
+}
+
+function assertUnchanged(current: { status: AppointmentStatus; staffId: string; startsAt: Date; endsAt: Date; updatedAt: Date }, expected: typeof current) {
+  if (current.status !== expected.status || current.staffId !== expected.staffId ||
+      +current.startsAt !== +expected.startsAt || +current.endsAt !== +expected.endsAt ||
+      current.updatedAt?.getTime() !== expected.updatedAt?.getTime()) {
+    throw new AppointmentConflictError("Appointment changed. Please refresh and try again.");
+  }
+}
 
 /**
  * THE central booking engine described in section 2 / section 18.
@@ -39,11 +60,12 @@ export async function createAppointment(input: CreateAppointmentInput) {
     throw new Error("A home address is required for home appointments");
   }
 
-  const client = await prisma.client.findUnique({ where: { id: input.clientId } });
+  const appointment = await appointmentTransaction(async (tx) => {
+  const client = await tx.client.findUnique({ where: { id: input.clientId } });
   if (!client || client.businessId !== input.businessId) {
     throw new Error("Client not found for this business");
   }
-  const service = await prisma.service.findUnique({ where: { id: input.serviceId } });
+  const service = await tx.service.findUnique({ where: { id: input.serviceId } });
   if (!service || service.businessId !== input.businessId) {
     throw new Error("Service not found for this business");
   }
@@ -57,7 +79,7 @@ export async function createAppointment(input: CreateAppointmentInput) {
     throw new Error("This service is not offered at the salon");
   }
 
-  const staff = await prisma.staff.findUnique({ where: { id: input.staffId } });
+  const staff = await tx.staff.findUnique({ where: { id: input.staffId } });
   if (!staff || staff.businessId !== input.businessId) {
     throw new Error("Staff member not found for this business");
   }
@@ -67,14 +89,14 @@ export async function createAppointment(input: CreateAppointmentInput) {
   if (input.locationType === "HOME" && !staff.homeServiceEligible) {
     throw new Error("Staff member is not eligible for home service");
   }
-  const staffService = await prisma.staffService.findUnique({
+  const staffService = await tx.staffService.findUnique({
     where: { staffId_serviceId: { staffId: staff.id, serviceId: service.id } },
   });
   if (!staffService) {
     throw new Error("Staff member is not qualified to perform this service");
   }
 
-  const business = await prisma.business.findUnique({ where: { id: input.businessId } });
+  const business = await tx.business.findUnique({ where: { id: input.businessId } });
   if (!business) {
     throw new Error("Business not found");
   }
@@ -87,18 +109,18 @@ export async function createAppointment(input: CreateAppointmentInput) {
   const endsAt = new Date(input.startsAt.getTime() + durationWithBuffer * 60_000);
 
   const availability = await checkStaffAvailability({
+    serviceId: input.serviceId,
     staffId: input.staffId,
     businessId: input.businessId,
     startsAt: input.startsAt,
     endsAt,
     locationType: input.locationType,
     travelBufferMins,
-  });
+  }, tx);
   if (!availability.available) {
-    throw new Error(`Cannot book this slot: ${availability.reason}`);
+    throw new AppointmentConflictError(`Cannot book this slot: ${availability.reason}`);
   }
 
-  const appointment = await prisma.$transaction(async (tx) => {
     const created = await tx.appointment.create({
       data: {
         businessId: input.businessId,
@@ -130,17 +152,16 @@ export async function createAppointment(input: CreateAppointmentInput) {
         actorStaffId: input.actor.staffId,
       },
     });
-    return created;
-  });
-
-  await writeAuditLog({
+  await appointmentAudit(tx, {
     businessId: input.businessId,
     actorUserId: input.actor.userId,
     actorType: input.actor.type === "CLIENT" ? "SYSTEM" : input.actor.type,
     resource: "appointment",
-    resourceId: appointment.id,
+    resourceId: created.id,
     action: "create",
-    newValue: appointment,
+    newValue: created,
+  });
+    return created;
   });
 
   await eventBus.emit("appointment.created", input.businessId, { appointment });
@@ -162,14 +183,19 @@ export interface ChangeStatusInput {
  * attentionScanner.ts, which flags for a human instead.
  */
 export async function changeAppointmentStatus(input: ChangeStatusInput) {
-  const appointment = await prisma.appointment.findUniqueOrThrow({ where: { id: input.appointmentId } });
+  // Capture intent once. A serialization retry must not reinterpret a stale
+  // request as permission to transition from a newer status.
+  const expected = await prisma.appointment.findUniqueOrThrow({ where: { id: input.appointmentId } });
+  const { updated, appointment } = await appointmentTransaction(async (tx) => {
+  const appointment = await tx.appointment.findUniqueOrThrow({ where: { id: input.appointmentId } });
+  assertUnchanged(appointment, expected);
 
   if (!isTransitionAllowed(appointment.status, input.newStatus)) {
     throw new InvalidStatusTransitionError(appointment.status, input.newStatus);
   }
 
-  const updated = await prisma.appointment.update({
-    where: { id: appointment.id },
+  const changed = await tx.appointment.updateMany({
+    where: { id: appointment.id, businessId: appointment.businessId, status: appointment.status, updatedAt: appointment.updatedAt },
     data: {
       status: input.newStatus,
       // Resolving the status also resolves any pending "needs attention" flag.
@@ -177,8 +203,10 @@ export async function changeAppointmentStatus(input: ChangeStatusInput) {
       attentionReason: null,
     },
   });
+  if (changed.count !== 1) throw new AppointmentConflictError("Appointment changed. Please refresh and try again.");
+  const updated = await tx.appointment.findUniqueOrThrow({ where: { id: appointment.id } });
 
-  await prisma.appointmentEvent.create({
+  await tx.appointmentEvent.create({
     data: {
       appointmentId: appointment.id,
       type: input.newStatus === "CANCELLED" ? "CANCELLATION" : input.newStatus === "COMPLETED" ? "COMPLETED" : input.newStatus === "NO_SHOW" ? "NO_SHOW_MARKED" : "STATUS_CHANGED",
@@ -192,7 +220,7 @@ export async function changeAppointmentStatus(input: ChangeStatusInput) {
   });
 
   if (appointment.needsAttention) {
-    await prisma.appointmentEvent.create({
+    await tx.appointmentEvent.create({
       data: {
         appointmentId: appointment.id,
         type: "ATTENTION_RESOLVED",
@@ -202,7 +230,7 @@ export async function changeAppointmentStatus(input: ChangeStatusInput) {
     });
   }
 
-  await writeAuditLog({
+  await appointmentAudit(tx, {
     businessId: appointment.businessId,
     actorUserId: input.actor.userId,
     actorType: input.actor.type,
@@ -211,6 +239,8 @@ export async function changeAppointmentStatus(input: ChangeStatusInput) {
     action: "status_change",
     previousValue: { status: appointment.status },
     newValue: { status: input.newStatus },
+  });
+  return { updated, appointment };
   });
 
   await eventBus.emit("appointment.status_changed", appointment.businessId, {
@@ -235,16 +265,18 @@ export interface RescheduleInput {
 
 export async function rescheduleAppointment(input: RescheduleInput) {
   assertValidDate(input.newStartsAt, "Appointment start time");
-  const appointment = await prisma.appointment.findUniqueOrThrow({ where: { id: input.appointmentId } });
-  const service = await prisma.service.findUniqueOrThrow({ where: { id: appointment.serviceId } });
+  const expected = await prisma.appointment.findUniqueOrThrow({ where: { id: input.appointmentId } });
+  const updated = await appointmentTransaction(async (tx) => {
+  const appointment = await tx.appointment.findUniqueOrThrow({ where: { id: input.appointmentId } });
+  assertMovable(appointment.status);
+  assertUnchanged(appointment, expected);
 
-  // `durationSnapshot` is the historical service duration. There is no
-  // buffer snapshot in the current schema, so the existing service buffer is
-  // retained until a future migration can snapshot it too.
-  const durationWithBuffer = appointment.durationSnapshot + service.bufferMinutes;
+  // endsAt-startsAt already snapshots the service duration plus post-buffer.
+  const durationWithBuffer = (appointment.endsAt.getTime() - appointment.startsAt.getTime()) / 60_000;
   const newEndsAt = new Date(input.newStartsAt.getTime() + durationWithBuffer * 60_000);
 
   const availability = await checkStaffAvailability({
+    serviceId: appointment.serviceId,
     staffId: appointment.staffId,
     businessId: appointment.businessId,
     startsAt: input.newStartsAt,
@@ -252,16 +284,17 @@ export async function rescheduleAppointment(input: RescheduleInput) {
     locationType: appointment.locationType,
     travelBufferMins: appointment.travelBufferMins,
     excludeAppointmentId: appointment.id,
-  });
+  }, tx);
   if (!availability.available) {
-    throw new Error(`Cannot reschedule to this slot: ${availability.reason}`);
+    throw new AppointmentConflictError(`Cannot reschedule to this slot: ${availability.reason}`);
   }
 
-  const updated = await prisma.$transaction(async (tx) => {
-    const rescheduled = await tx.appointment.update({
-      where: { id: appointment.id },
+    const changed = await tx.appointment.updateMany({
+      where: { id: appointment.id, businessId: appointment.businessId, status: appointment.status, updatedAt: appointment.updatedAt },
       data: { startsAt: input.newStartsAt, endsAt: newEndsAt },
     });
+    if (changed.count !== 1) throw new AppointmentConflictError();
+    const rescheduled = await tx.appointment.findUniqueOrThrow({ where: { id: appointment.id } });
     await tx.appointmentEvent.create({
       data: {
         appointmentId: appointment.id,
@@ -273,10 +306,7 @@ export async function rescheduleAppointment(input: RescheduleInput) {
         actorStaffId: input.actor.staffId,
       },
     });
-    return rescheduled;
-  });
-
-  await writeAuditLog({
+  await appointmentAudit(tx, {
     businessId: appointment.businessId,
     actorUserId: input.actor.userId,
     actorType: input.actor.type,
@@ -286,8 +316,10 @@ export async function rescheduleAppointment(input: RescheduleInput) {
     previousValue: { startsAt: appointment.startsAt },
     newValue: { startsAt: input.newStartsAt },
   });
+    return rescheduled;
+  });
 
-  await eventBus.emit("appointment.rescheduled", appointment.businessId, { appointment: updated });
+  await eventBus.emit("appointment.rescheduled", updated.businessId, { appointment: updated });
 
   return updated;
 }
@@ -301,8 +333,12 @@ export interface ReassignStaffInput {
 
 /** Section 11: staff reassignment must be recorded and the client notified — never silent. */
 export async function reassignAppointmentStaff(input: ReassignStaffInput) {
-  const appointment = await prisma.appointment.findUniqueOrThrow({ where: { id: input.appointmentId } });
-  const staff = await prisma.staff.findUnique({ where: { id: input.newStaffId } });
+  const expected = await prisma.appointment.findUniqueOrThrow({ where: { id: input.appointmentId } });
+  const updated = await appointmentTransaction(async (tx) => {
+  const appointment = await tx.appointment.findUniqueOrThrow({ where: { id: input.appointmentId } });
+  assertMovable(appointment.status);
+  assertUnchanged(appointment, expected);
+  const staff = await tx.staff.findUnique({ where: { id: input.newStaffId } });
   if (!staff || staff.businessId !== appointment.businessId) {
     throw new Error("Staff member not found for this business");
   }
@@ -312,7 +348,7 @@ export async function reassignAppointmentStaff(input: ReassignStaffInput) {
   if (appointment.locationType === "HOME" && !staff.homeServiceEligible) {
     throw new Error("Staff member is not eligible for home service");
   }
-  const staffService = await prisma.staffService.findUnique({
+  const staffService = await tx.staffService.findUnique({
     where: { staffId_serviceId: { staffId: staff.id, serviceId: appointment.serviceId } },
   });
   if (!staffService) {
@@ -320,22 +356,25 @@ export async function reassignAppointmentStaff(input: ReassignStaffInput) {
   }
 
   const availability = await checkStaffAvailability({
+    serviceId: appointment.serviceId,
     staffId: input.newStaffId,
     businessId: appointment.businessId,
     startsAt: appointment.startsAt,
     endsAt: appointment.endsAt,
     locationType: appointment.locationType,
     travelBufferMins: appointment.travelBufferMins,
-  });
+    excludeAppointmentId: appointment.id,
+  }, tx);
   if (!availability.available) {
-    throw new Error(`Cannot reassign to this staff member: ${availability.reason}`);
+    throw new AppointmentConflictError(`Cannot reassign to this staff member: ${availability.reason}`);
   }
 
-  const updated = await prisma.$transaction(async (tx) => {
-    const reassigned = await tx.appointment.update({
-      where: { id: appointment.id },
+    const changed = await tx.appointment.updateMany({
+      where: { id: appointment.id, businessId: appointment.businessId, status: appointment.status, updatedAt: appointment.updatedAt },
       data: { staffId: input.newStaffId },
     });
+    if (changed.count !== 1) throw new AppointmentConflictError();
+    const reassigned = await tx.appointment.findUniqueOrThrow({ where: { id: appointment.id } });
     await tx.appointmentEvent.create({
       data: {
         appointmentId: appointment.id,
@@ -347,10 +386,7 @@ export async function reassignAppointmentStaff(input: ReassignStaffInput) {
         actorUserId: input.actor.userId,
       },
     });
-    return reassigned;
-  });
-
-  await writeAuditLog({
+  await appointmentAudit(tx, {
     businessId: appointment.businessId,
     actorUserId: input.actor.userId,
     actorType: input.actor.type,
@@ -360,13 +396,15 @@ export async function reassignAppointmentStaff(input: ReassignStaffInput) {
     previousValue: { staffId: appointment.staffId },
     newValue: { staffId: input.newStaffId },
   });
+    return reassigned;
+  });
 
   // A dedicated event so a notification listener can send exactly the
   // "Ada is unavailable, reassigned to Mike" message from section 11 —
   // this fires regardless of *why* the reassignment happened.
-  await eventBus.emit("appointment.reassigned", appointment.businessId, {
+  await eventBus.emit("appointment.reassigned", updated.businessId, {
     appointment: updated,
-    previousStaffId: appointment.staffId,
+    previousStaffId: expected.staffId,
     reason: input.reason,
   });
 

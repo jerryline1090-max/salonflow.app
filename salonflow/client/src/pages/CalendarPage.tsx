@@ -10,8 +10,9 @@ import { Alert } from "@/components/Alert";
 import { CreateAppointmentModal } from "@/components/CreateAppointmentModal";
 import { AppointmentDetailModal } from "@/components/AppointmentDetailModal";
 import { RescheduleModal } from "@/components/RescheduleModal";
-import { formatDate, startOfDayIso, endOfDayIso, toDatetimeLocalValue } from "@/utils/format";
-import { parseTimeToMinutes, minutesSinceMidnight, formatSlotLabel, dateWithDayOffset } from "@/utils/time";
+import { toDatetimeLocalValue } from "@/utils/format";
+import { parseTimeToMinutes, formatSlotLabel } from "@/utils/time";
+import { businessDateKey, businessMinutes, businessWallTime, businessCalendarRange, shiftBusinessDate } from "@/utils/businessCalendar";
 import type { Appointment } from "@/types";
 
 const ROW_HEIGHT = 48; // px per 30-minute slot
@@ -28,26 +29,29 @@ const STATUS_BLOCK_CLASSES: Record<Appointment["status"], string> = {
 };
 
 export function CalendarPage() {
-  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [chosenDay, setChosenDay] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [rescheduleTarget, setRescheduleTarget] = useState<Appointment | null>(null);
   const [createPrefill, setCreatePrefill] = useState<{ staffId?: string; startsAt?: string } | null>(null);
 
   const { data: business } = useBusiness();
   const { data: staff } = useStaff(1, 100);
-  const { data: appointments, isError, isLoading } = useAppointments({ from: startOfDayIso(selectedDate), to: endOfDayIso(selectedDate), limit: 100 });
+  const timezone = business?.timezone;
+  const selectedDay = chosenDay ?? businessDateKey(new Date(), timezone ?? "UTC");
+  const range = timezone ? businessCalendarRange(selectedDay, timezone) : undefined;
+  const { data: appointments, isError, isLoading } = useAppointments({ ...range, limit: 100 }, Boolean(timezone));
 
-  const dayOfWeek = selectedDate.getDay();
+  const dayOfWeek = new Date(`${selectedDay}T12:00:00Z`).getUTCDay();
   const activeStaff = useMemo(() => (staff?.items ?? []).filter((s) => s.status === "ACTIVE"), [staff]);
 
   const businessHoursToday = business?.workingHours?.find((w) => w.dayOfWeek === dayOfWeek);
-  const businessClosedToday = businessHoursToday?.isClosed ?? false;
+  const businessClosedToday = businessHoursToday?.isClosed ?? true;
   const gridStart = businessHoursToday && !businessHoursToday.isClosed ? parseTimeToMinutes(businessHoursToday.openTime) : DEFAULT_OPEN;
   const gridEnd = businessHoursToday && !businessHoursToday.isClosed ? parseTimeToMinutes(businessHoursToday.closeTime) : DEFAULT_CLOSE;
   const totalSlots = Math.max(Math.round((gridEnd - gridStart) / SLOT_MINUTES), 0);
 
-  const isToday = new Date().toDateString() === selectedDate.toDateString();
-  const nowMinutes = minutesSinceMidnight(new Date().toISOString());
+  const isToday = Boolean(timezone) && businessDateKey(new Date(), timezone!) === selectedDay;
+  const nowMinutes = businessMinutes(new Date().toISOString(), timezone ?? "UTC");
   const showNowLine = isToday && nowMinutes >= gridStart && nowMinutes <= gridEnd;
 
   function appointmentsForStaff(staffId: string): Appointment[] {
@@ -55,30 +59,30 @@ export function CalendarPage() {
   }
 
   function handleSlotClick(staffId: string, slotStartMinutes: number) {
-    const d = new Date(selectedDate);
-    d.setHours(Math.floor(slotStartMinutes / 60), slotStartMinutes % 60, 0, 0);
+    if (!timezone) return;
+    const d = businessWallTime(selectedDay, slotStartMinutes, timezone);
     setCreatePrefill({ staffId, startsAt: toDatetimeLocalValue(d.toISOString()) });
   }
 
   return (
     <PageContainer>
-      <PageHeader title="Calendar" description="Who’s free, and when—choose an available slot to book it." actions={<Button onClick={() => setCreatePrefill({})}>New appointment</Button>} />
+      <PageHeader title="Calendar" description="Choose a time to request a booking. Availability is verified when you save." actions={<Button onClick={() => setCreatePrefill({})}>New appointment</Button>} />
 
       <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface p-2">
-        <Button size="sm" variant="secondary" onClick={() => setSelectedDate((d) => dateWithDayOffset(d, -1))} aria-label="Previous day">
+        <Button size="sm" variant="secondary" onClick={() => setChosenDay(shiftBusinessDate(selectedDay, -1))} aria-label="Previous day">
           ←
         </Button>
-        <Button size="sm" variant="secondary" onClick={() => setSelectedDate(new Date())}>
+        <Button size="sm" variant="secondary" onClick={() => setChosenDay(null)}>
           Today
         </Button>
-        <Button size="sm" variant="secondary" onClick={() => setSelectedDate((d) => dateWithDayOffset(d, 1))} aria-label="Next day">
+        <Button size="sm" variant="secondary" onClick={() => setChosenDay(shiftBusinessDate(selectedDay, 1))} aria-label="Next day">
           →
         </Button>
-        <p className="ml-1 font-display text-lg text-ink">{formatDate(selectedDate.toISOString())}</p>
+        <p className="ml-1 font-display text-lg text-ink">{`${selectedDay} · ${timezone ?? "Loading timezone…"}`}</p>
       </div>
 
       <Card className="overflow-hidden">
-        {isLoading ? <div className="space-y-3 p-5"><div className="h-10 animate-pulse rounded bg-paper-sunken" /><div className="h-72 animate-pulse rounded bg-paper-sunken" /></div> : isError ? <Alert tone="error" className="m-5">The calendar could not be loaded.</Alert> : businessClosedToday ? (
+        {!timezone || isLoading ? <div className="space-y-3 p-5"><div className="h-10 animate-pulse rounded bg-paper-sunken" /><div className="h-72 animate-pulse rounded bg-paper-sunken" /></div> : isError ? <Alert tone="error" className="m-5">The calendar could not be loaded.</Alert> : businessClosedToday ? (
           <EmptyState title="Closed today" description="This salon isn't open on this day — check Settings to adjust working hours." />
         ) : activeStaff.length === 0 ? (
           <EmptyState title="No active staff to schedule" description="Add a staff member to start filling in the calendar." />
@@ -124,15 +128,16 @@ export function CalendarPage() {
                         {Array.from({ length: totalSlots }).map((_, i) => (
                           <button
                             key={i}
+                            disabled={gridStart + i * SLOT_MINUTES < parseTimeToMinutes(schedule!.startTime) || gridStart + i * SLOT_MINUTES >= parseTimeToMinutes(schedule!.endTime)}
                             onClick={() => handleSlotClick(member.id, gridStart + i * SLOT_MINUTES)}
-                            className="absolute inset-x-0 border-t border-line/60 hover:bg-brass-50/50 transition-colors"
+                            className="absolute inset-x-0 border-t border-line/60 enabled:hover:bg-brass-50/50 disabled:bg-paper-sunken/60 disabled:cursor-not-allowed transition-colors"
                             style={{ top: i * ROW_HEIGHT, height: ROW_HEIGHT }}
                             aria-label={`Book ${member.name} at ${formatSlotLabel(gridStart + i * SLOT_MINUTES)}`}
                           />
                         ))}
                         {appointmentsForStaff(member.id).map((appt) => {
-                          const startMin = minutesSinceMidnight(appt.startsAt);
-                          const endMin = minutesSinceMidnight(appt.endsAt);
+                          const startMin = businessMinutes(appt.startsAt, timezone!);
+                          const endMin = businessMinutes(appt.endsAt, timezone!);
                           const top = ((startMin - gridStart) / SLOT_MINUTES) * ROW_HEIGHT;
                           const height = Math.max(((endMin - startMin) / SLOT_MINUTES) * ROW_HEIGHT, 20);
                           return (

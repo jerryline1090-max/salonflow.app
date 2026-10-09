@@ -3,6 +3,7 @@ import { prisma } from "../../lib/prisma";
 import { ActorContext, assertCan } from "../../core/permissions";
 import { resolveOwnStaffId } from "../staff/resolveOwnStaffId";
 import { checkStaffAvailability } from "../staff/staffAvailability";
+import { businessWeekday } from "../appointments/bookingWindow";
 import {
   rescheduleAppointment,
   changeAppointmentStatus as changeAppointmentStatusService,
@@ -160,7 +161,8 @@ export async function getClientStats(actor: ActorContext, clientId: string) {
 
 export async function listStaffAvailableOnDate(actor: ActorContext, date: Date) {
   await assertCan(actor, "staff", "view");
-  const dayOfWeek = date.getDay();
+  const business = await prisma.business.findUniqueOrThrow({ where: { id: actor.businessId! } });
+  const dayOfWeek = businessWeekday(date, business.timezone);
 
   const staff = await prisma.staff.findMany({
     where: { businessId: actor.businessId, status: "ACTIVE" },
@@ -189,9 +191,11 @@ export async function explainStaffAvailability(actor: ActorContext, input: Expla
   await assertCan(actor, "appointments", "view");
 
   const service = await prisma.service.findUniqueOrThrow({ where: { id: input.serviceId } });
+  if (service.businessId !== actor.businessId) throw new Error("Service not found");
   const endsAt = new Date(input.startsAt.getTime() + (service.durationMinutes + service.bufferMinutes) * 60_000);
 
   return checkStaffAvailability({
+    serviceId: input.serviceId,
     staffId: input.staffId,
     businessId: actor.businessId!,
     startsAt: input.startsAt,

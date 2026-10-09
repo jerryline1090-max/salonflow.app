@@ -2,15 +2,27 @@ jest.mock("../../../lib/prisma");
 
 import { prisma } from "../../../lib/prisma";
 import { checkStaffAvailability } from "../staffAvailability";
-import { buildStaff, buildSchedule, buildBusiness, wednesdayAt } from "../../../test-utils/factories";
+import { buildStaff, buildSchedule, buildBusiness, buildService } from "../../../test-utils/factories";
+
+function wednesdayAt(hour: number, minute = 0) { return new Date(Date.UTC(2026, 7, 26, hour, minute)); }
 
 describe("checkStaffAvailability", () => {
+  beforeEach(() => {
+    (prisma.appointment.aggregate as jest.Mock).mockResolvedValue({ _max: { travelBufferMins: 45 } });
+    jest.useFakeTimers().setSystemTime(new Date("2026-08-26T00:00:00Z"));
+    (prisma.service.findUnique as jest.Mock).mockResolvedValue(buildService());
+    (prisma.staffService.findUnique as jest.Mock).mockResolvedValue({ id: "link" });
+    (prisma.business.findUnique as jest.Mock).mockResolvedValue(buildBusiness({ timezone: "UTC", minBookingNoticeMins: 0, maxBookingHorizonDays: 60 }));
+    (prisma.businessHours.findUnique as jest.Mock).mockResolvedValue({ openTime: "00:00", closeTime: "23:59", isClosed: false });
+  });
+  afterEach(() => jest.useRealTimers());
   it("rejects when the staff member does not exist", async () => {
     (prisma.staff.findUnique as jest.Mock).mockResolvedValue(null);
 
     const result = await checkStaffAvailability({
       staffId: "ghost",
       businessId: "biz_1",
+      serviceId: "svc_1",
       startsAt: wednesdayAt(14),
       endsAt: wednesdayAt(15),
       locationType: "SALON",
@@ -25,6 +37,7 @@ describe("checkStaffAvailability", () => {
     const result = await checkStaffAvailability({
       staffId: "staff_1",
       businessId: "biz_1",
+      serviceId: "svc_1",
       startsAt: wednesdayAt(14),
       endsAt: wednesdayAt(15),
       locationType: "SALON",
@@ -40,6 +53,7 @@ describe("checkStaffAvailability", () => {
     const result = await checkStaffAvailability({
       staffId: "staff_1",
       businessId: "biz_1",
+      serviceId: "svc_1",
       startsAt: wednesdayAt(14),
       endsAt: wednesdayAt(15),
       locationType: "HOME",
@@ -56,6 +70,7 @@ describe("checkStaffAvailability", () => {
     const result = await checkStaffAvailability({
       staffId: "staff_1",
       businessId: "biz_1",
+      serviceId: "svc_1",
       startsAt: wednesdayAt(14),
       endsAt: wednesdayAt(15),
       locationType: "SALON",
@@ -72,6 +87,7 @@ describe("checkStaffAvailability", () => {
     const result = await checkStaffAvailability({
       staffId: "staff_1",
       businessId: "biz_1",
+      serviceId: "svc_1",
       startsAt: wednesdayAt(19),
       endsAt: wednesdayAt(20),
       locationType: "SALON",
@@ -89,6 +105,7 @@ describe("checkStaffAvailability", () => {
     const result = await checkStaffAvailability({
       staffId: "staff_1",
       businessId: "biz_1",
+      serviceId: "svc_1",
       startsAt: wednesdayAt(14),
       endsAt: wednesdayAt(15),
       locationType: "SALON",
@@ -109,6 +126,7 @@ describe("checkStaffAvailability", () => {
     const result = await checkStaffAvailability({
       staffId: "staff_1",
       businessId: "biz_1",
+      serviceId: "svc_1",
       startsAt: wednesdayAt(14),
       endsAt: wednesdayAt(15),
       locationType: "SALON",
@@ -122,7 +140,7 @@ describe("checkStaffAvailability", () => {
     (prisma.staff.findUnique as jest.Mock).mockResolvedValue(buildStaff());
     (prisma.staffSchedule.findUnique as jest.Mock).mockResolvedValue(buildSchedule());
     (prisma.staffTimeOff.findFirst as jest.Mock).mockResolvedValue(null);
-    (prisma.business.findUnique as jest.Mock).mockResolvedValue(buildBusiness({ homeServiceTravelBufferMins: 30 }));
+    (prisma.business.findUnique as jest.Mock).mockResolvedValue(buildBusiness({ timezone: "UTC", minBookingNoticeMins: 0, maxBookingHorizonDays: 60, homeServiceTravelBufferMins: 30 }));
     // A home appointment 2:00-2:30 PM already exists; a salon slot at 2:30 PM
     // leaves zero travel time, so with a 30-min buffer this must conflict.
     (prisma.appointment.findMany as jest.Mock).mockResolvedValue([
@@ -132,6 +150,7 @@ describe("checkStaffAvailability", () => {
     const result = await checkStaffAvailability({
       staffId: "staff_1",
       businessId: "biz_1",
+      serviceId: "svc_1",
       startsAt: wednesdayAt(14, 30),
       endsAt: wednesdayAt(15, 30),
       locationType: "SALON",
@@ -146,7 +165,7 @@ describe("checkStaffAvailability", () => {
     (prisma.staff.findUnique as jest.Mock).mockResolvedValue(buildStaff());
     (prisma.staffSchedule.findUnique as jest.Mock).mockResolvedValue(buildSchedule());
     (prisma.staffTimeOff.findFirst as jest.Mock).mockResolvedValue(null);
-    (prisma.business.findUnique as jest.Mock).mockResolvedValue(buildBusiness({ homeServiceTravelBufferMins: 10 }));
+    (prisma.business.findUnique as jest.Mock).mockResolvedValue(buildBusiness({ timezone: "UTC", minBookingNoticeMins: 0, maxBookingHorizonDays: 60, homeServiceTravelBufferMins: 10 }));
     (prisma.appointment.findMany as jest.Mock).mockResolvedValue([
       { id: "home_appt", locationType: "HOME", startsAt: wednesdayAt(14), endsAt: wednesdayAt(14, 30), travelBufferMins: 45 },
     ]);
@@ -154,6 +173,7 @@ describe("checkStaffAvailability", () => {
     const result = await checkStaffAvailability({
       staffId: "staff_1",
       businessId: "biz_1",
+      serviceId: "svc_1",
       startsAt: wednesdayAt(15),
       endsAt: wednesdayAt(16),
       locationType: "SALON",
@@ -172,6 +192,7 @@ describe("checkStaffAvailability", () => {
     const result = await checkStaffAvailability({
       staffId: "staff_1",
       businessId: "biz_1",
+      serviceId: "svc_1",
       startsAt: wednesdayAt(14),
       endsAt: wednesdayAt(15),
       locationType: "SALON",

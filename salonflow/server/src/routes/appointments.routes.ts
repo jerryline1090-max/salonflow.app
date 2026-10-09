@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { requirePermission } from "../middleware/authorize";
 import { assertBelongsToBusiness, ForbiddenError } from "../core/tenantGuard";
@@ -13,8 +14,14 @@ import { resolveOwnStaffId } from "../modules/staff/resolveOwnStaffId";
 import { asyncHandler } from "../middleware/asyncHandler";
 import { rethrowIfDatabaseUnavailable } from "../middleware/errorHandler";
 import { pageResult, parsePagination } from "../core/pagination";
+import { AppointmentConflictError } from "../modules/appointments/appointmentTransaction";
 
 export const appointmentsRouter = Router();
+
+function rethrowAppointmentInfrastructure(error: unknown) {
+  rethrowIfDatabaseUnavailable(error);
+  if (error instanceof Prisma.PrismaClientKnownRequestError || error instanceof Prisma.PrismaClientUnknownRequestError || error instanceof Prisma.PrismaClientValidationError) throw error;
+}
 
 // Every handler below assumes `authenticate` has already run (mounted in
 // index.ts) so `req.actor` is guaranteed to be set.
@@ -85,7 +92,8 @@ appointmentsRouter.post("/", requirePermission("appointments", "create"), asyncH
     });
     res.status(201).json(appointment);
   } catch (err: any) {
-    rethrowIfDatabaseUnavailable(err);
+    rethrowAppointmentInfrastructure(err);
+    if (err instanceof AppointmentConflictError) return res.status(409).json({ error: err.message });
     res.status(400).json({ error: err.message });
   }
 }));
@@ -109,7 +117,8 @@ appointmentsRouter.post("/:id/status", requirePermission("appointments", "edit")
     });
     res.json(updated);
   } catch (err: any) {
-    rethrowIfDatabaseUnavailable(err);
+    rethrowAppointmentInfrastructure(err);
+    if (err instanceof AppointmentConflictError) return res.status(409).json({ error: err.message });
     if (err instanceof ForbiddenError) return res.status(403).json({ error: err.message });
     res.status(400).json({ error: err.message });
   }
@@ -133,7 +142,8 @@ appointmentsRouter.post("/:id/reschedule", requirePermission("appointments", "ed
     });
     res.json(updated);
   } catch (err: any) {
-    rethrowIfDatabaseUnavailable(err);
+    rethrowAppointmentInfrastructure(err);
+    if (err instanceof AppointmentConflictError) return res.status(409).json({ error: err.message });
     if (err instanceof ForbiddenError) return res.status(403).json({ error: err.message });
     res.status(400).json({ error: err.message });
   }
@@ -153,7 +163,8 @@ appointmentsRouter.post("/:id/acknowledge-attention", requirePermission("appoint
     const updated = await acknowledgeAttention({ appointmentId: req.params.id, actor: { type: "USER", userId: req.actor!.userId } });
     res.json(updated);
   } catch (err: any) {
-    rethrowIfDatabaseUnavailable(err);
+    rethrowAppointmentInfrastructure(err);
+    if (err instanceof AppointmentConflictError) return res.status(409).json({ error: err.message });
     if (err instanceof ForbiddenError) return res.status(403).json({ error: err.message });
     res.status(400).json({ error: err.message });
   }
@@ -179,7 +190,8 @@ appointmentsRouter.post("/:id/reassign", requirePermission("appointments", "edit
     });
     res.json(updated);
   } catch (err: any) {
-    rethrowIfDatabaseUnavailable(err);
+    rethrowAppointmentInfrastructure(err);
+    if (err instanceof AppointmentConflictError) return res.status(409).json({ error: err.message });
     if (err instanceof ForbiddenError) return res.status(403).json({ error: err.message });
     res.status(400).json({ error: err.message });
   }

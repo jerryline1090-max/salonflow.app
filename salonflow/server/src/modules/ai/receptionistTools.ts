@@ -76,6 +76,7 @@ export async function checkSlotAvailability(
   }
   const endsAt = new Date(input.startsAt.getTime() + (service.durationMinutes + service.bufferMinutes) * 60_000);
   return checkStaffAvailability({
+    serviceId: input.serviceId,
     staffId: input.staffId,
     businessId: ctx.businessId,
     startsAt: input.startsAt,
