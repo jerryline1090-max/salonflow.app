@@ -1,4 +1,5 @@
 import { ConversationChannel } from "@prisma/client";
+import { publicMessagingEnabled, MESSAGING_UNAVAILABLE } from "../../middleware/publicMessaging";
 import { prisma } from "../../lib/prisma";
 import { buildWhatsAppDeps, buildInstagramDeps } from "../ai/orchestratorFactory";
 
@@ -21,6 +22,7 @@ export async function sendToClientChannel(
   externalUserId: string,
   text: string
 ): Promise<ChannelMessengerResult> {
+  if (!publicMessagingEnabled(process.env.PUBLIC_MESSAGING_ENABLED)) return { success: false, error: MESSAGING_UNAVAILABLE };
   if (channel === "WEBSITE") {
     // Section 1C: website chat is request/response only for now — there's
     // no push capability to proactively message a website visitor later.

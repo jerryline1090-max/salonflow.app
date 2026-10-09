@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requirePublicMessaging } from "../middleware/publicMessaging";
 import { prisma } from "../lib/prisma";
 import { WebsiteChannelAdapter } from "../modules/ai/channels/websiteAdapter";
 import { handleUnifiedMessage } from "../modules/ai/receptionistOrchestrator";
@@ -38,7 +39,7 @@ function buildWebsiteDeps(): OrchestratorDeps {
  * key — a business's internal database ID should not be a public-facing
  * credential.
  */
-publicChatRouter.post("/:businessKey/chat", async (req, res) => {
+publicChatRouter.post("/:businessKey/chat", requirePublicMessaging, async (req, res) => {
   try {
     const business = await prisma.business.findUnique({ where: { id: req.params.businessKey } });
     if (!business) return res.status(404).json({ error: "Unknown business" });

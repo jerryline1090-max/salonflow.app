@@ -1,4 +1,5 @@
 import express, { Router } from "express";
+import { requirePublicMessaging } from "../middleware/publicMessaging";
 import { prisma } from "../lib/prisma";
 import { verifyMetaSignature } from "../middleware/verifyMetaSignature";
 import { buildWhatsAppDeps, buildInstagramDeps } from "../modules/ai/orchestratorFactory";
@@ -43,6 +44,7 @@ webhooksRouter.post("/paystack", paystackWebhookBody, async (req, res) => {
 
 // Paystack has already finished its raw-body route above. Meta keeps its
 // existing JSON + raw capture behavior; no reliance on body-parser skip flags.
+webhooksRouter.use(["/whatsapp", "/instagram"], requirePublicMessaging);
 webhooksRouter.use(express.json({ verify: (req: any, _res, body: Buffer) => { req.rawBody = body; } }));
 
 /**

@@ -57,3 +57,10 @@ describe("POST /api/integrations/:provider/disconnect", () => {
     expect(disconnectIntegration).toHaveBeenCalledWith("biz_1", "INSTAGRAM", "owner_1", expect.anything());
   });
 });
+// Existing enabled-path regressions opt in only within this mocked test file.
+const originalMessagingFlag = process.env.PUBLIC_MESSAGING_ENABLED;
+beforeEach(() => { process.env.PUBLIC_MESSAGING_ENABLED = "true"; });
+afterAll(() => {
+  if (originalMessagingFlag === undefined) delete process.env.PUBLIC_MESSAGING_ENABLED;
+  else process.env.PUBLIC_MESSAGING_ENABLED = originalMessagingFlag;
+});

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requireMetaMessaging } from "../middleware/publicMessaging";
 import { requirePermission } from "../middleware/authorize";
 import { resolveProviderSlug } from "../modules/integrations/providerSlug";
 import { secretsProvider } from "../modules/ai/secretsProvider";
@@ -20,7 +21,7 @@ integrationsRouter.get("/", requirePermission("integrations", "view"), async (re
 // Starts Meta's official OAuth flow (section 19). The frontend redirects
 // the owner's browser to the returned URL — SalonFlow itself never
 // collects a WhatsApp/Facebook/Instagram password.
-integrationsRouter.post("/:provider/connect", requirePermission("integrations", "edit"), async (req, res) => {
+integrationsRouter.post("/:provider/connect", requireMetaMessaging, requirePermission("integrations", "edit"), async (req, res) => {
   try {
     const provider = resolveProviderSlug(req.params.provider);
     const authorizationUrl = await beginConnect(req.actor!.businessId!, provider, req.actor!.userId);
@@ -32,7 +33,7 @@ integrationsRouter.post("/:provider/connect", requirePermission("integrations", 
 
 // While status is NEEDS_SETUP (multiple WhatsApp numbers / Instagram
 // accounts available to the connected login), lists them so the owner can pick.
-integrationsRouter.get("/:provider/candidates", requirePermission("integrations", "view"), async (req, res) => {
+integrationsRouter.get("/:provider/candidates", requireMetaMessaging, requirePermission("integrations", "view"), async (req, res) => {
   try {
     const provider = resolveProviderSlug(req.params.provider);
     const candidates = await listCandidateAccounts(req.actor!.businessId!, provider, secretsProvider);
@@ -42,7 +43,7 @@ integrationsRouter.get("/:provider/candidates", requirePermission("integrations"
   }
 });
 
-integrationsRouter.post("/:provider/select-account", requirePermission("integrations", "edit"), async (req, res) => {
+integrationsRouter.post("/:provider/select-account", requireMetaMessaging, requirePermission("integrations", "edit"), async (req, res) => {
   try {
     const provider = resolveProviderSlug(req.params.provider);
     await selectAccount(req.actor!.businessId!, provider, req.body.externalId, req.actor!.userId);

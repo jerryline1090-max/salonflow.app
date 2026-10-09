@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requireMetaMessaging } from "../middleware/publicMessaging";
 import { verifyOAuthState, InvalidOAuthStateError } from "../core/oauthState";
 import { completeConnect } from "../modules/integrations/integrationService";
 import { resolveProviderSlug } from "../modules/integrations/providerSlug";
@@ -14,7 +15,7 @@ export const integrationsCallbackRouter = Router();
  * exists — this endpoint's job (verify state, exchange the code, update
  * the Integration row) doesn't change either way.
  */
-integrationsCallbackRouter.get("/:provider/callback", async (req, res) => {
+integrationsCallbackRouter.get("/:provider/callback", requireMetaMessaging, async (req, res) => {
   try {
     const provider = resolveProviderSlug(req.params.provider);
     const { code, state, error, error_description } = req.query as Record<string, string>;

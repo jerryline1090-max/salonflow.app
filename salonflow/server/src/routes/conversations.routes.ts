@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requirePublicMessaging } from "../middleware/publicMessaging";
 import { prisma } from "../lib/prisma";
 import { requirePermission } from "../middleware/authorize";
 import { assertBelongsToBusiness, ForbiddenError } from "../core/tenantGuard";
@@ -69,7 +70,7 @@ conversationsRouter.post("/:id/return-to-ai", requirePermission("conversations",
 // A human's reply, sent back through whichever channel the conversation is
 // actually on — never a parallel "staff messaging system" separate from the
 // client's real WhatsApp/Instagram thread.
-conversationsRouter.post("/:id/reply", requirePermission("conversations", "edit"), async (req, res) => {
+conversationsRouter.post("/:id/reply", requirePublicMessaging, requirePermission("conversations", "edit"), async (req, res) => {
   try {
     const conversation = await prisma.conversation.findUniqueOrThrow({ where: { id: req.params.id } });
     assertBelongsToBusiness(req.actor!, conversation.businessId, "conversation");

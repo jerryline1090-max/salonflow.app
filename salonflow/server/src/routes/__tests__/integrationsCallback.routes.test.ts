@@ -66,3 +66,10 @@ describe("GET /api/integrations/:provider/callback", () => {
     expect(res.text).toContain("+234 800 000 0001");
   });
 });
+// Existing enabled-path regressions opt in only within this mocked test file.
+const originalMessagingFlag = process.env.PUBLIC_MESSAGING_ENABLED;
+beforeEach(() => { process.env.PUBLIC_MESSAGING_ENABLED = "true"; });
+afterAll(() => {
+  if (originalMessagingFlag === undefined) delete process.env.PUBLIC_MESSAGING_ENABLED;
+  else process.env.PUBLIC_MESSAGING_ENABLED = originalMessagingFlag;
+});

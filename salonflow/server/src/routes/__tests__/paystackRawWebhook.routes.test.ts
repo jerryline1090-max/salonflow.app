@@ -22,11 +22,17 @@ function app() {
   return instance;
 }
 describe("actual signed Paystack raw-byte HTTP ingress", () => {
+  const originalMessagingFlag = process.env.PUBLIC_MESSAGING_ENABLED;
+  afterAll(() => {
+    if (originalMessagingFlag === undefined) delete process.env.PUBLIC_MESSAGING_ENABLED;
+    else process.env.PUBLIC_MESSAGING_ENABLED = originalMessagingFlag;
+  });
   const secret = "fake-hmac-credential-test-only";
   const signature = (body: string | Buffer) => createHmac("sha512", secret).update(body).digest("hex");
   const raw = '{ "event": "charge.success", "data": {"id":9007199254740993,"reference":"sf_fake"} }';
   const post = (body: string, signedBody = body) => request(app()).post("/api/webhooks/paystack").set("Content-Type", "application/json").set("x-paystack-signature", signature(signedBody)).send(body);
   beforeEach(() => {
+    process.env.PUBLIC_MESSAGING_ENABLED = "false";
     jest.clearAllMocks();
     (createPaystackProvider as jest.Mock).mockReturnValue(new PaystackAdapter({ secretKey: secret, timeoutMs: 100, planCodes: { STARTER: "PLN_fake", GROWTH: "PLN_fake", PRO: "PLN_fake" } }, { post: jest.fn() }));
     (processVerifiedPaystackEvent as jest.Mock).mockResolvedValue({ handled: true });
@@ -89,6 +95,7 @@ describe("actual signed Paystack raw-byte HTTP ingress", () => {
     expect(log).not.toHaveBeenCalled(); expect(error).not.toHaveBeenCalled(); expect(warn).not.toHaveBeenCalled();
   });
   it.each(["whatsapp", "instagram"])("preserves %s JSON/raw capture and actual Meta HMAC", async channel => {
+    process.env.PUBLIC_MESSAGING_ENABLED = "true";
     const prior = process.env.META_APP_SECRET;
     process.env.META_APP_SECRET = "fake-meta-test-only";
     (prisma.integration.findFirst as jest.Mock).mockResolvedValue(null);
