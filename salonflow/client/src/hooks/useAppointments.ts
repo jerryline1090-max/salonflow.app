@@ -1,6 +1,23 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { appointmentsApi } from "@/api/resources";
+import { appointmentsApi, staffApi } from "@/api/resources";
 import type { AppointmentStatus, LocationType } from "@/types";
+
+export function useCalendarContext() {
+  return useQuery({ queryKey: ["appointments", "calendar-context"], queryFn: ({ signal }) => appointmentsApi.calendarContext(signal), staleTime: 60_000 });
+}
+
+export function useAppointmentRange(range?: { from: string; to: string }) {
+  return useQuery({
+    queryKey: ["appointments", "complete-range", range],
+    queryFn: ({ signal }) => appointmentsApi.range(range!, signal),
+    enabled: Boolean(range),
+    staleTime: 10_000,
+  });
+}
+
+export function useCalendarStaff(enabled: boolean) {
+  return useQuery({ queryKey: ["staff", "calendar-directory"], queryFn: ({ signal }) => staffApi.calendar(signal), enabled, staleTime: 60_000 });
+}
 
 export function useAppointments(filters?: { from?: string; to?: string; status?: AppointmentStatus; needsAttention?: boolean; clientId?: string; page?: number; limit?: number }, enabled = true) {
   return useQuery({

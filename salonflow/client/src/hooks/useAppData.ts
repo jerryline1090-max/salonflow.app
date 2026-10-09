@@ -37,8 +37,8 @@ export function useServices() {
   return useQuery({ queryKey: ["services"], queryFn: servicesApi.list, staleTime: 5 * 60_000, refetchOnWindowFocus: false });
 }
 
-export function useStaff(page = 1, limit = 25) {
-  return useQuery({ queryKey: ["staff", page, limit], queryFn: () => staffApi.list(page, limit), placeholderData: (previousData) => previousData, staleTime: 60_000 });
+export function useStaff(page = 1, limit = 25, enabled = true) {
+  return useQuery({ queryKey: ["staff", page, limit], queryFn: () => staffApi.list(page, limit), enabled, placeholderData: (previousData) => previousData, staleTime: 60_000 });
 }
 
 export function useBusiness() {

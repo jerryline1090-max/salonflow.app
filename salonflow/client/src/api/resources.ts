@@ -1,4 +1,5 @@
 import { api } from "./client";
+import { completePages, assertBoundedAppointmentRange } from "@/utils/completePages";
 import type {
   Appointment,
   AppointmentStatus,
@@ -75,6 +76,11 @@ export const settingsApi = {
 };
 
 export const appointmentsApi = {
+  calendarContext: (signal?: AbortSignal) => api.get<{ timezone: string; workingHours: BusinessHoursEntry[]; canCreate: boolean; canViewStaff: boolean }>("/appointments/calendar-context", undefined, signal),
+  range: (range: { from: string; to: string }, signal?: AbortSignal) => {
+    assertBoundedAppointmentRange(range);
+    return api.get<Appointment[]>("/appointments/calendar-range", { from: range.from, to: range.to }, signal);
+  },
   list: (filters?: { from?: string; to?: string; status?: AppointmentStatus; needsAttention?: boolean; clientId?: string; page?: number; limit?: number }) =>
     api.get<PaginatedResult<Appointment>>("/appointments", filters),
   get: (id: string) => api.get<Appointment>(`/appointments/${id}`),
@@ -126,6 +132,8 @@ export const servicesApi = {
 };
 
 export const staffApi = {
+  calendar: (signal?: AbortSignal) => completePages<StaffMember>((page, limit, requestSignal) =>
+    api.get<PaginatedResult<StaffMember>>("/staff", { page, limit }, requestSignal), signal),
   list: (page = 1, limit = 25) => api.get<PaginatedResult<StaffMember>>("/staff", { page, limit }),
   get: (id: string) => api.get<StaffMember>(`/staff/${id}`),
   create: (input: {

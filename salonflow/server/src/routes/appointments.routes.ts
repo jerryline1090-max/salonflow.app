@@ -15,8 +15,14 @@ import { asyncHandler } from "../middleware/asyncHandler";
 import { rethrowIfDatabaseUnavailable } from "../middleware/errorHandler";
 import { pageResult, parsePagination } from "../core/pagination";
 import { AppointmentConflictError } from "../modules/appointments/appointmentTransaction";
+import { can } from "../core/permissions";
 
 export const appointmentsRouter = Router();
+
+// Pilot guardrail: generous for a salon day/month, bounded in memory/network.
+// Overflow is an error, never a truncated calendar presented as complete.
+const MAX_CALENDAR_APPOINTMENTS = 1000;
+const MAX_CALENDAR_RANGE_MS = 32 * 24 * 60 * 60 * 1000;
 
 function rethrowAppointmentInfrastructure(error: unknown) {
   rethrowIfDatabaseUnavailable(error);
@@ -51,6 +57,48 @@ appointmentsRouter.get("/", requirePermission("appointments", "view"), asyncHand
     prisma.appointment.count({ where }),
   ]);
   res.json(pageResult(items, total, page, limit));
+}));
+
+appointmentsRouter.get("/calendar-range", requirePermission("appointments", "view"), asyncHandler(async (req, res) => {
+  const { from, to, staffId } = req.query;
+  const start = typeof from === "string" ? Date.parse(from) : NaN;
+  const end = typeof to === "string" ? Date.parse(to) : NaN;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start || end - start > MAX_CALENDAR_RANGE_MS) {
+    return res.status(400).json({ code: "INVALID_CALENDAR_RANGE", error: "Provide a valid start and end within a maximum 32-day range." });
+  }
+  const actor = req.actor!;
+  const items = await prisma.$transaction(async tx => {
+    const where: Prisma.AppointmentWhereInput = { businessId: actor.businessId!, startsAt: { gte: new Date(start), lte: new Date(end) } };
+    if (actor.role === "STAFF") {
+      const ownStaff = await tx.staff.findUnique({ where: { userId: actor.userId }, select: { id: true, businessId: true } });
+      if (!ownStaff || ownStaff.businessId !== actor.businessId) return [];
+      where.staffId = ownStaff.id;
+    } else if (typeof staffId === "string" && staffId) {
+      where.staffId = staffId;
+    }
+    // Relation projection may require multiple SQL statements. All reads,
+    // including staff linkage and relation labels, share this read snapshot.
+    return tx.appointment.findMany({ where, orderBy: [{ startsAt: "asc" }, { id: "asc" }], take: MAX_CALENDAR_APPOINTMENTS + 1,
+      include: { client: { select: { id: true, name: true, phone: true, email: true } }, service: { select: { id: true, name: true, price: true, durationMinutes: true } }, staff: { select: { id: true, name: true } } },
+    });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, maxWait: 5000, timeout: 10000 });
+  if (items.length > MAX_CALENDAR_APPOINTMENTS) {
+    return res.status(422).json({ code: "CALENDAR_RANGE_TOO_LARGE", error: "This range contains more than 1,000 appointments. Choose a smaller date range or contact support." });
+  }
+  return res.json(items);
+}));
+
+// Minimal display context, not general settings/directory access. Tenant is
+// always authenticated; STAFF needs no settings permission to see their day.
+appointmentsRouter.get("/calendar-context", requirePermission("appointments", "view"), asyncHandler(async (req, res) => {
+  const business = await prisma.business.findUniqueOrThrow({
+    where: { id: req.actor!.businessId! },
+    select: { timezone: true, workingHours: { select: { dayOfWeek: true, openTime: true, closeTime: true, isClosed: true } } },
+  });
+  res.json({ timezone: business.timezone, workingHours: business.workingHours,
+    canCreate: await can(req.actor!, "appointments", "create"),
+    canViewStaff: req.actor!.role !== "STAFF" && await can(req.actor!, "staff", "view"),
+  });
 }));
 
 appointmentsRouter.get("/:id", requirePermission("appointments", "view"), asyncHandler(async (req, res) => {

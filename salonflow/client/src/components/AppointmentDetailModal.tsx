@@ -46,7 +46,7 @@ export function AppointmentDetailModal({
 }) {
   const { user } = useAuth();
   const { data: appointment, isLoading } = useAppointment(appointmentId);
-  const { data: staff } = useStaff(1, 100);
+  const { data: staff } = useStaff(1, 100, Boolean(appointmentId) && (user?.role === "OWNER" || user?.role === "MANAGER"));
   const { data: outstanding } = useOutstandingBalance(appointmentId);
   const changeStatus = useChangeAppointmentStatus();
   const reassign = useReassignAppointment();

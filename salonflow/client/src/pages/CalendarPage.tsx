@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { useAppointments } from "@/hooks/useAppointments";
-import { useBusiness, useStaff } from "@/hooks/useAppData";
+import { useAppointmentRange, useCalendarContext, useCalendarStaff } from "@/hooks/useAppointments";
+import { calendarColumns, calendarGridBounds, calendarInterval } from "@/utils/appointmentViews";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { EmptyState } from "@/components/EmptyState";
@@ -34,20 +34,25 @@ export function CalendarPage() {
   const [rescheduleTarget, setRescheduleTarget] = useState<Appointment | null>(null);
   const [createPrefill, setCreatePrefill] = useState<{ staffId?: string; startsAt?: string } | null>(null);
 
-  const { data: business } = useBusiness();
-  const { data: staff } = useStaff(1, 100);
+  const context = useCalendarContext();
+  const business = context.data;
+  const directory = useCalendarStaff(business?.canViewStaff === true);
   const timezone = business?.timezone;
   const selectedDay = chosenDay ?? businessDateKey(new Date(), timezone ?? "UTC");
   const range = timezone ? businessCalendarRange(selectedDay, timezone) : undefined;
-  const { data: appointments, isError, isLoading } = useAppointments({ ...range, limit: 100 }, Boolean(timezone));
+  const appointmentQuery = useAppointmentRange(range);
+  const appointments = appointmentQuery.data;
+  const isError = context.isError || appointmentQuery.isError;
+  const isLoading = context.isPending || appointmentQuery.isPending;
 
   const dayOfWeek = new Date(`${selectedDay}T12:00:00Z`).getUTCDay();
-  const activeStaff = useMemo(() => (staff?.items ?? []).filter((s) => s.status === "ACTIVE"), [staff]);
+  const activeStaff = useMemo(() => calendarColumns(appointments ?? [], business?.canViewStaff ? directory.data : []), [appointments, directory.data, business?.canViewStaff]);
 
   const businessHoursToday = business?.workingHours?.find((w) => w.dayOfWeek === dayOfWeek);
   const businessClosedToday = businessHoursToday?.isClosed ?? true;
-  const gridStart = businessHoursToday && !businessHoursToday.isClosed ? parseTimeToMinutes(businessHoursToday.openTime) : DEFAULT_OPEN;
-  const gridEnd = businessHoursToday && !businessHoursToday.isClosed ? parseTimeToMinutes(businessHoursToday.closeTime) : DEFAULT_CLOSE;
+  const open = businessHoursToday && !businessHoursToday.isClosed ? parseTimeToMinutes(businessHoursToday.openTime) : DEFAULT_OPEN;
+  const close = businessHoursToday && !businessHoursToday.isClosed ? parseTimeToMinutes(businessHoursToday.closeTime) : DEFAULT_CLOSE;
+  const { start: gridStart, end: gridEnd } = calendarGridBounds(appointments ?? [], selectedDay, timezone ?? "UTC", open, close);
   const totalSlots = Math.max(Math.round((gridEnd - gridStart) / SLOT_MINUTES), 0);
 
   const isToday = Boolean(timezone) && businessDateKey(new Date(), timezone!) === selectedDay;
@@ -55,7 +60,7 @@ export function CalendarPage() {
   const showNowLine = isToday && nowMinutes >= gridStart && nowMinutes <= gridEnd;
 
   function appointmentsForStaff(staffId: string): Appointment[] {
-    return (appointments?.items ?? []).filter((a) => a.staffId === staffId);
+    return (appointments ?? []).filter((a) => a.staffId === staffId);
   }
 
   function handleSlotClick(staffId: string, slotStartMinutes: number) {
@@ -66,7 +71,7 @@ export function CalendarPage() {
 
   return (
     <PageContainer>
-      <PageHeader title="Calendar" description="Choose a time to request a booking. Availability is verified when you save." actions={<Button onClick={() => setCreatePrefill({})}>New appointment</Button>} />
+      <PageHeader title="Calendar" description="Your appointments in the salon’s timezone. Booking availability is verified when you save." actions={business?.canCreate ? <Button onClick={() => setCreatePrefill({})}>New appointment</Button> : undefined} />
 
       <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface p-2">
         <Button size="sm" variant="secondary" onClick={() => setChosenDay(shiftBusinessDate(selectedDay, -1))} aria-label="Previous day">
@@ -82,10 +87,10 @@ export function CalendarPage() {
       </div>
 
       <Card className="overflow-hidden">
-        {!timezone || isLoading ? <div className="space-y-3 p-5"><div className="h-10 animate-pulse rounded bg-paper-sunken" /><div className="h-72 animate-pulse rounded bg-paper-sunken" /></div> : isError ? <Alert tone="error" className="m-5">The calendar could not be loaded.</Alert> : businessClosedToday ? (
-          <EmptyState title="Closed today" description="This salon isn't open on this day — check Settings to adjust working hours." />
+        {isError ? <Alert tone="error" className="m-5">{appointmentQuery.error?.message ?? "The complete calendar could not be loaded."} <Button size="sm" variant="secondary" onClick={() => { void context.refetch(); if (timezone) void appointmentQuery.refetch(); }}>Retry</Button></Alert> : !timezone || isLoading ? <div className="space-y-3 p-5"><div className="h-10 animate-pulse rounded bg-paper-sunken" /><div className="h-72 animate-pulse rounded bg-paper-sunken" /></div> : businessClosedToday && appointments?.length === 0 ? (
+          <EmptyState title="Closed today" description="This salon isn't open on this day, and your calendar has no appointments." />
         ) : activeStaff.length === 0 ? (
-          <EmptyState title="No active staff to schedule" description="Add a staff member to start filling in the calendar." />
+          <EmptyState title="No appointments for this day" description={business?.canViewStaff && directory.isPending ? "Staff columns are still loading." : "No appointments are scheduled in your authorized calendar."} />
         ) : (
           <div className="relative flex overflow-x-auto scrollbar-thin">
             {/* Time labels */}
@@ -111,7 +116,7 @@ export function CalendarPage() {
             {/* Staff columns */}
             {activeStaff.map((member) => {
               const schedule = member.schedule?.find((s) => s.dayOfWeek === dayOfWeek);
-              const isOff = !schedule || schedule.isOff;
+              const isOff = schedule?.isOff === true;
 
               return (
                 <div key={member.id} className="w-44 shrink-0 border-r border-line">
@@ -123,21 +128,22 @@ export function CalendarPage() {
                       <div className="absolute inset-0 bg-paper-sunken/60 flex items-start justify-center pt-6">
                         <p className="text-xs text-ink-muted">Off today</p>
                       </div>
-                    ) : (
+                    ) : schedule && business?.canCreate && !businessClosedToday ? (
                       <>
                         {Array.from({ length: totalSlots }).map((_, i) => (
                           <button
                             key={i}
-                            disabled={gridStart + i * SLOT_MINUTES < parseTimeToMinutes(schedule!.startTime) || gridStart + i * SLOT_MINUTES >= parseTimeToMinutes(schedule!.endTime)}
+                            disabled={gridStart + i * SLOT_MINUTES < Math.max(open, parseTimeToMinutes(schedule!.startTime)) || gridStart + i * SLOT_MINUTES >= Math.min(close, parseTimeToMinutes(schedule!.endTime))}
                             onClick={() => handleSlotClick(member.id, gridStart + i * SLOT_MINUTES)}
                             className="absolute inset-x-0 border-t border-line/60 enabled:hover:bg-brass-50/50 disabled:bg-paper-sunken/60 disabled:cursor-not-allowed transition-colors"
                             style={{ top: i * ROW_HEIGHT, height: ROW_HEIGHT }}
                             aria-label={`Book ${member.name} at ${formatSlotLabel(gridStart + i * SLOT_MINUTES)}`}
                           />
                         ))}
+                      </>
+                    ) : null}
                         {appointmentsForStaff(member.id).map((appt) => {
-                          const startMin = businessMinutes(appt.startsAt, timezone!);
-                          const endMin = businessMinutes(appt.endsAt, timezone!);
+                          const { start: startMin, end: endMin } = calendarInterval(appt, selectedDay, timezone!);
                           const top = ((startMin - gridStart) / SLOT_MINUTES) * ROW_HEIGHT;
                           const height = Math.max(((endMin - startMin) / SLOT_MINUTES) * ROW_HEIGHT, 20);
                           return (
@@ -156,8 +162,6 @@ export function CalendarPage() {
                             </button>
                           );
                         })}
-                      </>
-                    )}
                   </div>
                 </div>
               );
@@ -173,13 +177,15 @@ export function CalendarPage() {
         )}
       </Card>
 
+      {business?.canViewStaff && directory.isError && <Alert tone="warning" className="mt-3">Staff availability columns could not be loaded. All fetched appointments remain visible. <Button size="sm" variant="secondary" onClick={() => void directory.refetch()}>Retry staff</Button></Alert>}
+
       <p className="mt-2 text-xs text-ink-muted md:hidden">Swipe horizontally to view each staff member’s schedule.</p>
-      <CreateAppointmentModal open={createPrefill !== null} onClose={() => setCreatePrefill(null)} prefill={createPrefill ?? undefined} />
+      {business?.canCreate && createPrefill !== null && <CreateAppointmentModal open onClose={() => setCreatePrefill(null)} prefill={createPrefill} />}
       <AppointmentDetailModal
         appointmentId={detailId}
         onClose={() => setDetailId(null)}
         onReschedule={() => {
-          const appt = appointments?.items.find((a) => a.id === detailId);
+          const appt = appointments?.find((a) => a.id === detailId);
           if (appt) {
             setRescheduleTarget(appt);
             setDetailId(null);

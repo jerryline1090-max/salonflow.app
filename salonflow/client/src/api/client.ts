@@ -23,6 +23,7 @@ export class ApiUnavailableError extends ApiError {
 }
 
 interface RequestOptions {
+  signal?: AbortSignal;
   method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
   query?: Record<string, string | number | boolean | undefined>;
@@ -52,11 +53,14 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   const controller = new AbortController();
   const abort = () => controller.abort();
   session.controller.signal.addEventListener("abort", abort, { once: true });
+  options.signal?.addEventListener("abort", abort, { once: true });
+  if (options.signal?.aborted) controller.abort();
   const assertCurrentSession = () => {
     if (session !== getSessionSnapshot()) throw new ApiError("Session changed — request discarded", 409);
   };
   const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
+    options.signal?.throwIfAborted();
     let res: Response;
     try {
       res = await fetch(buildUrl(path, options.query), {
@@ -70,11 +74,13 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
       });
     } catch (error) {
       assertCurrentSession();
+      options.signal?.throwIfAborted();
       if (controller.signal.aborted) throw new ApiUnavailableError("timeout");
       throw new ApiUnavailableError("network");
     }
     // In particular, an old A-session 401 must not log out the new B session.
     assertCurrentSession();
+    options.signal?.throwIfAborted();
 
     if (res.status === 401) {
       setToken(null);
@@ -90,6 +96,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 
     const data = await res.json().catch(() => ({}) as ApiErrorBody);
     assertCurrentSession();
+    options.signal?.throwIfAborted();
 
     if (!res.ok) {
       throw new ApiError((data as ApiErrorBody).error ?? "Something went wrong", res.status);
@@ -99,11 +106,12 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   } finally {
     window.clearTimeout(timeout);
     session.controller.signal.removeEventListener("abort", abort);
+    options.signal?.removeEventListener("abort", abort);
   }
 }
 
 export const api = {
-  get: <T>(path: string, query?: RequestOptions["query"]) => apiRequest<T>(path, { method: "GET", query }),
+  get: <T>(path: string, query?: RequestOptions["query"], signal?: AbortSignal) => apiRequest<T>(path, { method: "GET", query, signal }),
   post: <T>(path: string, body?: unknown) => apiRequest<T>(path, { method: "POST", body }),
   put: <T>(path: string, body?: unknown) => apiRequest<T>(path, { method: "PUT", body }),
   del: <T>(path: string) => apiRequest<T>(path, { method: "DELETE" }),
