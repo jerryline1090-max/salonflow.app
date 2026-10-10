@@ -1,63 +1,142 @@
-import { SubscriptionStatus } from "@prisma/client";
+import { Prisma, Subscription } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { evaluateSubscriptionLifecycle } from "./lifecycleService";
 
+const DAY = 86400000;
 const LIMIT = 100;
+const noop = { transitioned: false, reminders: 0, blocked: false, eventType: null as string | null };
 
-async function createLifecycleNotification(tx: any, subscription: any, eventKey: string, title: string, body: string) {
-  try {
-    await tx.subscriptionLifecycleEvent.create({ data: { subscriptionId: subscription.id, businessId: subscription.businessId, eventKey } });
-    await tx.notification.create({ data: { businessId: subscription.businessId, type: "PAYMENT_OUTSTANDING", priority: "HIGH", audience: "OWNER", title, body, actionRequired: true } });
-    return 1;
-  } catch (error: any) {
-    if (error?.code === "P2002") return 0;
-    throw error;
+// Pre-commercial read-only audit: find events with eventKey in this list.
+// Never enable commercial jobs with unresolved records. No history repair.
+export const AMBIGUOUS_LEGACY_KEYS = ["past_due.recovery", "past_due.suspended", "cancellation.effective"] as const;
+type Action = { type: string; boundary: Date; title: string; body: string; transition: ReturnType<typeof evaluateSubscriptionLifecycle> };
+
+function actionFor(s: Subscription, now: Date): Action | null {
+  if (s.status === "CANCELLED") return null;
+  const transition = evaluateSubscriptionLifecycle(s, now);
+  if (transition && transition.status !== s.status) {
+    const type = transition.status === "CANCELLED" ? "cancellation.effective"
+      : transition.status === "GRACE_PERIOD" ? "trial.grace_started"
+      : s.status === "GRACE_PERIOD" ? "trial.suspended" : "past_due.suspended";
+    const boundary = type === "cancellation.effective" ? s.currentPeriodEndsAt
+      : type === "trial.grace_started" ? s.trialEndsAt : type === "trial.suspended" ? s.graceEndsAt : s.pastDueEndsAt;
+    if (!boundary) throw new Error("Missing lifecycle boundary");
+    return { type, boundary, transition, title: "Subscription update", body: transition.status === "SUSPENDED"
+      ? "SalonFlow access is now restricted until billing is recovered." : "Your subscription status has changed." };
   }
+  if (s.status === "TRIALING" && s.trialEndsAt && now < s.trialEndsAt) {
+    const day = Math.floor((now.getTime() - (s.trialEndsAt.getTime() - 14 * DAY)) / DAY) + 1;
+    const milestone = [14, 13, 11, 7, 1].find(value => day >= value);
+    if (milestone) return { type: `trial.day${milestone}`, boundary: s.trialEndsAt, transition: null,
+      title: "Your SalonFlow trial", body: "Your trial is active. Review your subscription when ready." };
+  }
+  const boundary = s.status === "GRACE_PERIOD" ? s.graceEndsAt : s.status === "PAST_DUE" ? s.pastDueEndsAt : null;
+  if (boundary && now.getTime() >= boundary.getTime() - DAY && now < boundary) return {
+    type: s.status === "GRACE_PERIOD" ? "trial.grace_ending" : "past_due.recovery", boundary, transition: null,
+    title: s.status === "GRACE_PERIOD" ? "Grace period ending" : "Payment recovery needed",
+    body: s.status === "GRACE_PERIOD" ? "Your SalonFlow grace period ends soon." : "Your subscription payment needs attention.",
+  };
+  return null;
 }
 
-function dueTrialKeys(subscription: any, now: Date) {
-  if (subscription.status !== "TRIALING" || !subscription.trialEndsAt) return [] as string[];
-  const started = subscription.trialEndsAt.getTime() - 14 * 86400000;
-  const day = Math.floor((now.getTime() - started) / 86400000) + 1;
-  return [1, 7, 11, 13, 14].filter((milestone) => day >= milestone).map((milestone) => `trial.day${milestone}`);
+// Trial/grace are one initial trial in this model. Earlier-than-trial-start
+// legacy events are prior. Grace additionally requires the original 3-day deadline.
+function legacyOutcome(s: Subscription, action: Action, createdAt: Date): "SAME" | "PRIOR" | "AMBIGUOUS" {
+  if ((AMBIGUOUS_LEGACY_KEYS as readonly string[]).includes(action.type)) return "AMBIGUOUS";
+  if (!s.trialEndsAt) return "AMBIGUOUS";
+  if (action.type === "trial.grace_ending" || action.type === "trial.suspended") {
+    if (!s.graceEndsAt || s.graceEndsAt.getTime() !== s.trialEndsAt.getTime() + 3 * DAY) return "AMBIGUOUS";
+  }
+  return createdAt.getTime() < s.trialEndsAt.getTime() - 14 * DAY ? "PRIOR" : "SAME";
+}
+class DuplicateTransition extends Error {}
+
+async function processOne(id: string, now: Date) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await prisma.$transaction(async tx => {
+        const current = await tx.subscription.findUnique({ where: { id } });
+        if (!current) return noop;
+        const action = actionFor(current, now);
+        if (!action) return noop;
+        const eventKey = `v2:${action.type}:${action.boundary.toISOString()}`;
+        const legacy = await tx.subscriptionLifecycleEvent.findUnique({
+          where: { subscriptionId_eventKey: { subscriptionId: id, eventKey: action.type } },
+        });
+        if (legacy) {
+          const compatibility = legacyOutcome(current, action, legacy.createdAt);
+          if (compatibility === "AMBIGUOUS") return { ...noop, blocked: true, eventType: action.type };
+          if (compatibility === "SAME") return noop;
+        }
+        if (action.transition) {
+          const updated = await tx.subscription.updateMany({
+            // Fence every evaluated state/deadline, including cancellation races.
+            where: { id, status: current.status, trialEndsAt: current.trialEndsAt,
+              graceEndsAt: current.graceEndsAt, pastDueEndsAt: current.pastDueEndsAt,
+              currentPeriodEndsAt: current.currentPeriodEndsAt, cancelAtPeriodEnd: current.cancelAtPeriodEnd },
+            data: { status: action.transition.status,
+              ...(action.transition.graceEndsAt ? { graceEndsAt: action.transition.graceEndsAt } : {}) },
+          });
+          if (updated.count !== 1) return noop;
+        }
+        const claimed = await tx.subscriptionLifecycleEvent.createMany({
+          data: [{ subscriptionId: id, businessId: current.businessId, eventKey }], skipDuplicates: true,
+        });
+        if (claimed.count !== 1) {
+          // Roll back any state write when this logical transition already exists.
+          // This is not a database error; never catch P2002 inside a transaction.
+          if (action.transition) throw new DuplicateTransition();
+          return noop;
+        }
+        if (action.transition) await tx.auditLog.create({ data: { businessId: current.businessId,
+          actorType: "SYSTEM", resource: "billing", resourceId: id,
+          action: `lifecycle_${current.status.toLowerCase()}_${action.transition.status.toLowerCase()}` } });
+        await tx.notification.create({ data: { businessId: current.businessId, type: "PAYMENT_OUTSTANDING",
+          priority: "HIGH", audience: "OWNER", title: action.title, body: action.body, actionRequired: true } });
+        return { transitioned: Boolean(action.transition), reminders: 1, blocked: false, eventType: action.type };
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5000, timeout: 10000 });
+    } catch (error) {
+      if (error instanceof DuplicateTransition) return noop;
+      // Retry only complete rolled-back serialization conflicts, at most 3 attempts.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034" && attempt < 2) continue;
+      throw error;
+    }
+  }
 }
 
 export async function processCommercialLifecycle(now = new Date()) {
-  const candidates = await prisma.subscription.findMany({
-    where: { OR: [
-      { status: "TRIALING", trialEndsAt: { lte: now } },
-      { status: "GRACE_PERIOD", graceEndsAt: { lte: now } },
-      { status: "PAST_DUE", pastDueEndsAt: { lte: now } },
-      { cancelAtPeriodEnd: true, currentPeriodEndsAt: { lte: now } },
-    ] }, orderBy: { updatedAt: "asc" }, take: LIMIT,
-  });
-  let transitioned = 0; let failed = 0; let notificationsCreated = 0;
-  for (const candidate of candidates) {
-    try {
-      const result = await prisma.$transaction(async (tx) => {
-        const current = await tx.subscription.findUnique({ where: { id: candidate.id } });
-        if (!current) return { transitioned: false, reminders: 0 };
-        // Evaluate milestones against the freshly-read pre-transition state so
-        // day 14 is not lost when trial expiry is due in this same run.
-        let preTransitionReminders = 0;
-        for (const key of dueTrialKeys(current, now)) preTransitionReminders += await createLifecycleNotification(tx, current, key, "Your SalonFlow trial", "Your trial is active. Review your subscription when ready.");
-        const transition = evaluateSubscriptionLifecycle(current, now);
-        if (!transition || transition.status === current.status) {
-          let reminders = preTransitionReminders;
-          if (current.status === "GRACE_PERIOD" && current.graceEndsAt && now >= new Date(current.graceEndsAt.getTime() - 86400000)) reminders += await createLifecycleNotification(tx, current, "trial.grace_ending", "Grace period ending", "Your SalonFlow grace period ends soon.");
-          if (current.status === "PAST_DUE" && current.pastDueEndsAt && now >= new Date(current.pastDueEndsAt.getTime() - 86400000)) reminders += await createLifecycleNotification(tx, current, "past_due.recovery", "Payment recovery needed", "Your subscription payment needs attention.");
-          return { transitioned: false, reminders };
+  const eligibility: Prisma.SubscriptionWhereInput = { OR: [
+    { status: "TRIALING", trialEndsAt: { lte: new Date(now.getTime() + 14 * DAY) } },
+    { status: "GRACE_PERIOD", graceEndsAt: { lte: new Date(now.getTime() + DAY) } },
+    { status: "PAST_DUE", pastDueEndsAt: { lte: new Date(now.getTime() + DAY) } },
+    { status: { not: "CANCELLED" }, cancelAtPeriodEnd: true, currentPeriodEndsAt: { lte: now } },
+  ] };
+  const result = { evaluated: 0, transitioned: 0, notificationsCreated: 0, failed: 0, blocked: 0 };
+  let after: string | undefined;
+  for (;;) {
+    const candidates = await prisma.subscription.findMany({
+      where: { ...eligibility, ...(after ? { id: { gt: after } } : {}) },
+      orderBy: { id: "asc" }, take: LIMIT, select: { id: true },
+    });
+    if (!candidates.length) break;
+    for (const candidate of candidates) {
+      after = candidate.id;
+      result.evaluated++;
+      try {
+        const outcome = await processOne(candidate.id, now);
+        if (outcome.blocked) {
+          result.blocked++;
+          console.warn("Commercial lifecycle blocked", { code: "LEGACY_AMBIGUOUS", subscriptionId: candidate.id, eventType: outcome.eventType });
         }
-        const updated = await tx.subscription.updateMany({ where: { id: current.id, status: current.status }, data: { status: transition.status, graceEndsAt: transition.graceEndsAt ?? current.graceEndsAt, pastDueEndsAt: transition.status === "SUSPENDED" ? current.pastDueEndsAt : transition.pastDueEndsAt ?? current.pastDueEndsAt } });
-        if (updated.count !== 1) return { transitioned: false, reminders: 0 };
-        await tx.auditLog.create({ data: { businessId: current.businessId, actorType: "SYSTEM", resource: "billing", resourceId: current.id, action: `lifecycle_${current.status.toLowerCase()}_${transition.status.toLowerCase()}` } });
-        const key = transition.status === "GRACE_PERIOD" ? "trial.grace_started" : current.status === "GRACE_PERIOD" ? "trial.suspended" : current.status === "PAST_DUE" ? "past_due.suspended" : "cancellation.effective";
-        const reminders = await createLifecycleNotification(tx, current, key, "Subscription update", transition.status === "SUSPENDED" ? "SalonFlow access is now restricted until billing is recovered." : "Your subscription status has changed.");
-        return { transitioned: true, reminders: reminders + preTransitionReminders };
-      });
-      if (result.transitioned) transitioned++;
-      notificationsCreated += result.reminders;
-    } catch { failed++; }
+        if (outcome.transitioned) result.transitioned++;
+        result.notificationsCreated += outcome.reminders;
+      } catch (error) {
+        result.failed++;
+        console.error("Commercial lifecycle failed", { subscriptionId: candidate.id,
+          code: error instanceof Prisma.PrismaClientKnownRequestError ? error.code : "PROCESSING_FAILED" });
+      }
+    }
+    if (candidates.length < LIMIT) break;
   }
-  return { evaluated: candidates.length, transitioned, notificationsCreated, failed };
+  return result;
 }
